@@ -1,0 +1,6 @@
+[general]
+name=Random Pointcaster Plugin
+description=Generate random points inside a selected polygon or the visible map extent.
+version=0.1.1
+author=Nico Tripcevich
+icon=icon.svg
