@@ -412,11 +412,12 @@ Item {
     }
   }
 
-  // Selected rows of the feature list model, or if none are selected, the first usable row
+  // Checked rows of the feature list model; if none are checked, every polygon and
+  // line row (e.g. all features found under a single tap)
   function targetsFromModel(model) {
     let count = model.count
     let selected = []
-    let fallback = null
+    let all = []
     for (let i = 0; i < count; i++) {
       let index = model.index(i, 0)
       let target = makeTarget(model.data(index, 262), model.data(index, 260),
@@ -424,16 +425,12 @@ Item {
       if (!target) {
         continue
       }
+      all.push(target)
       if (model.data(index, 258)) {
         selected.push(target)
-      } else if (!fallback) {
-        fallback = target
       }
     }
-    if (selected.length > 0) {
-      return selected
-    }
-    return fallback ? [fallback] : []
+    return selected.length > 0 ? selected : all
   }
 
   function findSelectedTargets() {

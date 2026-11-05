@@ -4,7 +4,7 @@ This is a QField app-wide plugin written in QML/JavaScript.
 
 ## Install
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
-https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.2.2.zip
+https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.2.3.zip
 
 Look for a tool in the top right corner of screen. In order for the Sample Points to be synced back to QGIS start by adding (link to template) this file to the GIS project
 
