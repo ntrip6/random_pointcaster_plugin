@@ -4,7 +4,7 @@ This is a QField app-wide plugin written in QML/JavaScript.
 
 ## Install
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
-https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.2.3.zip
+https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.2.5.zip
 
 Look for a tool in the top right corner of screen. In order for the Sample Points to be synced back to QGIS start by adding (link to template) this file to the GIS project
 
@@ -45,10 +45,45 @@ plugin writes into a layer that already exists in your project when it can.
    it. Because it is a normal project layer, QFieldCloud and QFieldSync treat
    the new points as ordinary edits and bring them back to Desktop.
 2. **Fallback (does not sync).** If there is no such layer, or it cannot be
-   written to, the plugin creates `sample_points.gpkg` in the project folder
-   (appending on later runs) and adds it as `Sample Points <HH:mm:ss>` (time of the run). This file is not
-   part of the project, so it is not synced automatically. Copy it off the
-   device and add it in QGIS Desktop.
+   written to, the plugin saves the points to `random_pointcaster.gpkg` in
+   QField's own folder on the device (the project folder is used only if that
+   fails) and appends to it on later runs. The toast after each run shows the
+   full path. The layer is added to the project as `Sample Points <HH:mm:ss>`
+   (time of the run), but QField does not keep it in the project, so it
+   disappears when the project is closed. The `.gpkg` file stays on the device.
+
+### Getting the fallback points back to desktop GIS
+
+The points from every run accumulate in `random_pointcaster.gpkg`, which is not
+synced. Use the **Export** button (the box-with-arrow icon next to the plugin
+button in the toolbar) at any time, including after QField has been restarted:
+
+- **Share** opens the system share sheet (email, Drive, AirDrop, etc.).
+- **Save a copy** lets you choose a folder or USB stick.
+
+Either way you get one file containing all runs. In QGIS, add it with
+**Layer > Add Layer > Add Vector Layer**.
+
+#### Where the file is stored
+
+`random_pointcaster.gpkg` is saved in QField's app directory. The toast after a
+run shows the exact path, and QField's **About QField** screen lists the app
+directory too.
+
+| Platform | Location |
+|----------|----------|
+| Android  | `Internal Storage/Android/data/ch.opengis.qfield/files/QField/random_pointcaster.gpkg` (visible over USB in File transfer mode) |
+| iOS      | Files app > On My iPhone/iPad > QField > `random_pointcaster.gpkg` |
+| Windows  | `C:\Users\<YourUsername>\AppData\Roaming\ch.opengis.qfield\QField\random_pointcaster.gpkg` |
+| macOS    | `/Users/<YourUsername>/Library/Application Support/QField/QField/random_pointcaster.gpkg` |
+| Linux    | `/home/<YourUsername>/.local/share/OPENGIS.ch/QField/random_pointcaster.gpkg` |
+
+Paths come from the QField documentation. The plugin itself saves to the
+location QField reports as its app directory, so if a path above differs on
+your device, trust the toast. If the app directory can't be written, the file
+goes in the project folder instead.
+
+Fields are `Name`, `InFeature`, `Created` and `RunSamplingPct`.
 
 ### Set up in QGIS Desktop before packaging or syncing
 

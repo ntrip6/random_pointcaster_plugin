@@ -15,11 +15,72 @@ Item {
   property string selectionSummary: ""
   property string runTime: ""
   property var createdLayerNames: []
+  property string lastSavedPath: ""
+  property string exportPath: ""
 
   Component.onCompleted: {
     log("Plugin loaded")
     iface.addItemToPluginsToolbar(pluginButton)
-    log("Toolbar button registered")
+    iface.addItemToPluginsToolbar(exportButton)
+    log("Toolbar buttons registered")
+  }
+
+  QfToolButton {
+    id: exportButton
+    iconSource: "icon_export.svg"
+    iconColor: Theme.mainColor
+    bgcolor: Theme.darkGray
+    round: true
+
+    onClicked: {
+      log("Export button clicked")
+      plugin.exportPath = plugin.findExportFile()
+      if (!plugin.exportPath) {
+        mainWindow.displayToast(qsTr("Random Pointcaster: no saved points file found yet. Generate points first."))
+        return
+      }
+      exportDialog.open()
+    }
+  }
+
+  Dialog {
+    id: exportDialog
+    title: qsTr("Export sample points")
+    modal: true
+    standardButtons: Dialog.Cancel
+    parent: mainWindow.contentItem
+    anchors.centerIn: parent
+    width: Math.min(parent.width * 0.9, 360)
+    z: 10000
+
+    contentItem: Column {
+      spacing: 12
+      width: exportDialog.availableWidth
+
+      Label {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        text: qsTr("All points from every run are in:\n%1").arg(plugin.exportPath)
+      }
+
+      Button {
+        width: parent.width
+        text: qsTr("Share (email, Drive, ...)")
+        onClicked: {
+          exportDialog.close()
+          plugin.shareFile(plugin.exportPath)
+        }
+      }
+
+      Button {
+        width: parent.width
+        text: qsTr("Save a copy to a folder or USB")
+        onClicked: {
+          exportDialog.close()
+          plugin.saveCopyOfFile(plugin.exportPath)
+        }
+      }
+    }
   }
 
   QfToolButton {
@@ -676,47 +737,115 @@ Item {
     return layerUtils.memoryLayerFromJsonString(newLayerName(), geojson, crs)
   }
 
-  // Saves the in-memory layer to a GeoPackage in the project folder and reloads it
-  // from disk. Memory layers vanish when QField closes; the file layer survives.
-  // Returns the original memory layer if anything fails.
-  function persistLayer(memoryLayer, path) {
-    let saved = attempt("save to GeoPackage", function() {
-      if (typeof layerUtils.saveVectorLayerAs !== "function") {
-        log("saveVectorLayerAs not available in this QField build")
-        return null
+  // Saves the in-memory layer to a GeoPackage and reloads it from disk, trying each
+  // candidate path in turn. Memory layers vanish when QField closes; the file layer
+  // survives. Returns the original memory layer if every path fails.
+  function persistLayer(memoryLayer, paths) {
+    let saved = null
+    if (typeof layerUtils.saveVectorLayerAs !== "function") {
+      log("saveVectorLayerAs not available in this QField build")
+    } else {
+      for (let i = 0; i < paths.length && !saved; i++) {
+        saved = attempt("save to " + paths[i], function() {
+          let result = layerUtils.saveVectorLayerAs(memoryLayer, paths[i], "GPKG")
+          log("saveVectorLayerAs(" + paths[i] + ") -> '" + result + "'")
+          if (!result) {
+            return null
+          }
+          let fileLayer = layerUtils.loadVectorLayer(result, newLayerName(), "ogr")
+          return (fileLayer && get(fileLayer, "isValid")) ? { layer: fileLayer, path: result } : null
+        })
       }
-      let result = layerUtils.saveVectorLayerAs(memoryLayer, path, "GPKG")
-      log("saveVectorLayerAs -> '" + result + "'")
-      if (!result) {
-        return null
-      }
-      let fileLayer = layerUtils.loadVectorLayer(result, newLayerName(), "ogr")
-      return (fileLayer && get(fileLayer, "isValid")) ? { layer: fileLayer, path: result } : null
-    })
+    }
 
     if (!saved) {
-      mainWindow.displayToast(qsTr("Sample Points: could not save to a file; the layer is temporary"))
+      mainWindow.displayToast(qsTr("Random Pointcaster: could not save to a file; the layer is temporary"))
       return memoryLayer
     }
-    mainWindow.displayToast(qsTr("Sample Points saved to %1").arg(saved.path))
+    mainWindow.displayToast(qsTr("Points saved to %1").arg(saved.path))
+    lastSavedPath = saved.path
     return saved.layer
   }
 
-  // Appends to the shared GeoPackage if it already exists; returns the layer or null
-  function appendToExisting(path, points, attrs) {
-    return attempt("append to existing GeoPackage", function() {
-      let existing = layerUtils.loadVectorLayer(path, newLayerName(), "ogr")
-      if (!existing || !get(existing, "isValid")) {
-        return null
+  // Appends to the GeoPackage if it already exists at one of the paths;
+  // returns { layer, path } or null
+  function appendToExisting(paths, points, attrs) {
+    for (let i = 0; i < paths.length; i++) {
+      let found = attempt("append to " + paths[i], function() {
+        let existing = layerUtils.loadVectorLayer(paths[i], newLayerName(), "ogr")
+        if (!existing || !get(existing, "isValid")) {
+          return null
+        }
+        let before = get(existing, "featureCount")
+        if (!fillLayer(existing, points, attrs)) {
+          return null
+        }
+        log("Appended to " + paths[i] + "; featureCount " + before + " -> "
+            + get(existing, "featureCount"))
+        return { layer: existing, path: paths[i] }
+      })
+      if (found) {
+        return found
       }
-      let before = get(existing, "featureCount")
-      if (!fillLayer(existing, points, attrs)) {
-        return null
+    }
+    return null
+  }
+
+  readonly property string gpkgFileName: "random_pointcaster.gpkg"
+
+  // The saved points file: the one used this session, else the first candidate
+  // path where the file exists (e.g. after QField was restarted)
+  function findExportFile() {
+    let paths = lastSavedPath ? [lastSavedPath] : []
+    paths = paths.concat(gpkgCandidatePaths())
+    for (let i = 0; i < paths.length; i++) {
+      let found = attempt("look for " + paths[i], function() {
+        let probe = layerUtils.loadVectorLayer(paths[i], "probe", "ogr")
+        return (probe && get(probe, "isValid")) ? paths[i] : null
+      })
+      if (found) {
+        return found
       }
-      log("Appended to " + path + "; featureCount " + before + " -> "
-          + get(existing, "featureCount"))
-      return existing
+    }
+    return null
+  }
+
+  function shareFile(path) {
+    lastError = ""
+    attempt("share file", function() {
+      platformUtilities.sendDatasetTo(path)
     })
+    if (lastError) {
+      mainWindow.displayToast(qsTr("Random Pointcaster: could not share: %1").arg(lastError))
+    }
+  }
+
+  function saveCopyOfFile(path) {
+    lastError = ""
+    attempt("save copy", function() {
+      platformUtilities.exportDatasetTo(path)
+    })
+    if (lastError) {
+      mainWindow.displayToast(qsTr("Random Pointcaster: could not export: %1").arg(lastError))
+    }
+  }
+
+  // Where the GeoPackage may live, best first: QField's own writable folder on the
+  // device, then the project folder
+  function gpkgCandidatePaths() {
+    let paths = []
+    let appDir = attempt("application directory", function() {
+      return typeof platformUtilities !== "undefined" ? platformUtilities.applicationDirectory() : null
+    })
+    if (appDir) {
+      paths.push(String(appDir).replace(/\\/g, "/").replace(/\/+$/, "") + "/" + gpkgFileName)
+    }
+    let folder = attempt("project folder", function() { return qgisProject.homePath })
+    if (folder) {
+      paths.push(String(folder).replace(/\\/g, "/").replace(/\/+$/, "") + "/" + gpkgFileName)
+    }
+    log("GeoPackage candidate paths: " + paths.join(" | "))
+    return paths
   }
 
   // Looks under the plain name and every name this session gave to a created layer
@@ -785,21 +914,24 @@ Item {
         mainWindow.displayToast(qsTr("Added %1 points to the project's Sample Points layer").arg(points.length))
         return true
       }
-      log("Project layer exists but could not be written; using sample_points.gpkg instead")
+      log("Project layer exists but could not be written; using " + gpkgFileName + " instead")
     }
 
-    let folder = attempt("project folder", function() { return qgisProject.homePath })
-    let path = folder ? String(folder).replace(/\\/g, "/") + "/sample_points.gpkg" : ""
+    let paths = gpkgCandidatePaths()
 
-    let layer = path ? appendToExisting(path, points, attrs) : null
+    let appended = appendToExisting(paths, points, attrs)
+    let layer = appended ? appended.layer : null
+    if (appended) {
+      lastSavedPath = appended.path
+    }
     if (layer) {
-      if (layerAlreadyInProject(path)) {
+      if (layerAlreadyInProject(appended.path)) {
         attempt("repaint", function() { layer.triggerRepaint() })
-        mainWindow.displayToast(qsTr("Added %1 points to sample_points.gpkg").arg(points.length))
+        mainWindow.displayToast(qsTr("Added %1 points to %2").arg(points.length).arg(gpkgFileName))
         attempt("refresh", function() { mapCanvas.refresh() })
         return true
       }
-      mainWindow.displayToast(qsTr("Added %1 points to sample_points.gpkg").arg(points.length))
+      mainWindow.displayToast(qsTr("Added %1 points to %2").arg(points.length).arg(gpkgFileName))
     } else {
       layer = createTypedLayer(points, target.crs, attrs)
       if (!layer) {
@@ -811,8 +943,8 @@ Item {
         mainWindow.displayToast(qsTr("Could not create the sample-points layer."))
         return false
       }
-      if (path) {
-        layer = persistLayer(layer, path)
+      if (paths.length > 0) {
+        layer = persistLayer(layer, paths)
       }
     }
 
