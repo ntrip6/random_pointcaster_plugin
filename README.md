@@ -12,10 +12,8 @@ In order for the Sample Points to be synced back to QGIS begin by adding [the te
 
 ## Use
 
-Select one or more polygons or lines (open the feature form, or multi-select
-features in the identify list), then tap the plugin toolbar button. The dialog
-lists the selected features with their size (m² for polygons, m for lines) and
-asks how many points to create **in each** feature.
+Install in QField, zoom to study area, and tap the Random Pointcaster plugin toolbar button. The dialog lists the selected features with their size (m² for polygons, m for lines) and asks how many points to create **in each** feature.
+To generate points inside polygons or along lines begin by selecting one or more polygons or lines (open the feature form, or multi-select features in the identify list), then click the toolbar button.
 
 - Polygons: points are sampled randomly inside each polygon. Overlapping polygons are sampled independently, so overlapping areas receive more points; the plugin shows a notice when it detects this.
 - Lines: points are placed at random distances along each line.
@@ -78,16 +76,6 @@ directory too.
 |----------|----------|
 | Android  | `Internal Storage/Android/data/ch.opengis.qfield/files/QField/random_pointcaster.gpkg` (visible over USB in File transfer mode) |
 | iOS      | Files app > On My iPhone/iPad > QField > `random_pointcaster.gpkg` |
-| Windows  | `C:\Users\<YourUsername>\AppData\Roaming\ch.opengis.qfield\QField\random_pointcaster.gpkg` |
-| macOS    | `/Users/<YourUsername>/Library/Application Support/QField/QField/random_pointcaster.gpkg` |
-| Linux    | `/home/<YourUsername>/.local/share/OPENGIS.ch/QField/random_pointcaster.gpkg` |
-
-Paths come from the QField documentation. The plugin itself saves to the
-location QField reports as its app directory, so if a path above differs on
-your device, trust the toast. If the app directory can't be written, the file
-goes in the project folder instead.
-
-Fields are `Name`, `InFeature`, `Created` and `RunSamplingPct`.
 
 ### Set up in QGIS Desktop before packaging or syncing
 
