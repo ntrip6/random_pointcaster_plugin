@@ -137,7 +137,7 @@ Item {
       let generated = sampleTarget(target, pointCount)
       log("Target " + target.name + " (" + target.kind + "): " + generated.length
           + " of " + pointCount + " points")
-      let rate = (target.size && generated.length > 0) ? generated.length / target.size : null
+      let rate = (target.size && generated.length > 0) ? generated.length / target.size * 100 : null
       let sameCrs = get(target.crs, "authid") === outCrsId
       for (let i = 0; i < generated.length; i++) {
         let p = generated[i]
@@ -561,14 +561,14 @@ Item {
     return total
   }
 
-  // Adds the points to a layer having Name, InFeature, Created and Rate fields
+  // Adds the points to a layer having Name, InFeature, Created and SamplingRate fields
   function fillLayer(layer, points, attrs) {
     let nameIndex = layer.fields.indexOf("Name")
     let featureIndex = layer.fields.indexOf("InFeature")
     let createdIndex = layer.fields.indexOf("Created")
-    let rateIndex = layer.fields.indexOf("Rate")
+    let rateIndex = layer.fields.indexOf("SamplingRate")
     log("Field indexes: Name=" + nameIndex + ", InFeature=" + featureIndex
-        + ", Created=" + createdIndex + ", Rate=" + rateIndex)
+        + ", Created=" + createdIndex + ", SamplingRate=" + rateIndex)
     if (nameIndex < 0 || featureIndex < 0 || createdIndex < 0 || rateIndex < 0) {
       return false
     }
@@ -592,7 +592,7 @@ Item {
     return true
   }
 
-  // Memory layer with Name, InFeature (Integer), Created (DateTime) and Rate (Double)
+  // Memory layer with Name, InFeature (Integer), Created (DateTime) and SamplingRate (Double, %)
   function createTypedLayer(points, crs, attrs) {
     try {
       if (!featureUtils) {
@@ -601,7 +601,7 @@ Item {
       }
       let uri = "Point?crs=" + get(crs, "authid")
           + "&field=Name:string(50)&field=InFeature:integer64"
-          + "&field=Created:datetime&field=Rate:double"
+          + "&field=Created:datetime&field=SamplingRate:double"
       let layer = layerUtils.loadVectorLayer(uri, layerName(), "memory")
       if (!layer || !get(layer, "isValid")) {
         log("Memory layer with typed fields is invalid; uri=" + uri)
@@ -622,7 +622,7 @@ Item {
         properties.InFeature = p.featureId
       }
       if (p.rate !== null) {
-        properties.Rate = p.rate
+        properties.SamplingRate = p.rate
       }
       return {
         type: "Feature",

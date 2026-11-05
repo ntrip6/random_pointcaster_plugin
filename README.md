@@ -1,13 +1,11 @@
 ﻿# Random Pointcaster Plugin for QField
 
-This is a QField app-wide plugin written in QML/JavaScript. QField does not
-load the Python plugin API used by QGIS Desktop.
+This is a QField app-wide plugin written in QML/JavaScript.
 
 ## Install
+In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
 
-Zip the contents of this folder so that `main.qml`, `metadata.txt`, and
-`icon.svg` are at the root of the archive. Install that ZIP in QField under
-**Settings > Plugins > Install plugin from URL** (using a URL to the ZIP).
+Zip contains `main.qml`, `metadata.txt`, and `icon.svg`  at the root of the archive.
 
 ## Use
 
@@ -29,7 +27,7 @@ Polygons and lines must be in a projected CRS with metre units (not degrees).
 | `Name`      | Text (50)     | `<feature name> Sample <n>`, e.g. `Lake Sample 2`             |
 | `InFeature` | Integer       | FID of the polygon or line the point belongs to (empty for map extent) |
 | `Created`   | Date/time     | Full creation date and time of each point                      |
-| `Rate`      | Decimal       | Points for that feature divided by its area in m² (polygons) or length in m (lines) |
+| `SamplingRate` | Decimal   | Percent of the feature sampled, assuming 1 m² (polygons) or 1 m (lines) per point: points ÷ area or length × 100 |
 
 The feature name is read from the first non-empty field called `Name`, `Label`
 or `Title` (case-insensitive, in that order). If none exists, `Polygon <FID>`
@@ -57,10 +55,10 @@ plugin writes into a layer that already exists in your project when it can.
 2. Table/layer name `Sample Points`, geometry type **Point**, and the same CRS
    as your polygons (other CRSs are reprojected, but matching is safest).
 3. Add exactly these fields (names are case-sensitive):
-   - `Name`: Text (string), length 50
-   - `InFeature`: Integer (64 bit)
-   - `Created`: Date & Time
-   - `Rate`: Decimal (double)
+   - `Name`: Text (string), length 50, for labeling
+   - `InFeature`: Integer (64 bit), for joining with feature
+   - `Created`: Date & Time, now
+   - `SamplingRate`: Decimal (double). Percent of the feature sampled, assuming 1 m² per point for polygons or 1 m per point for lines
 4. Add the layer to the project, name it `Sample Points`, and make sure it is
    editable (do not set it read-only).
 5. Package for QField with QFieldSync or push to QFieldCloud as usual. Set the
