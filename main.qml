@@ -13,6 +13,8 @@ Item {
   property int requestedPointCount: 1
   property var pendingTargets: []
   property string selectionSummary: ""
+  property string runTime: ""
+  property var createdLayerNames: []
 
   Component.onCompleted: {
     log("Plugin loaded")
@@ -130,13 +132,18 @@ Item {
     }
 
     let outCrs = targets[0].crs
+    runTime = timeLabel(new Date())
     let outCrsId = get(outCrs, "authid")
     let points = []
+    let overlapping = false
     for (let t = 0; t < targets.length; t++) {
       let target = targets[t]
       let generated = sampleTarget(target, pointCount)
       log("Target " + target.name + " (" + target.kind + "): " + generated.length
           + " of " + pointCount + " points")
+      if (!overlapping && target.kind === "polygon") {
+        overlapping = fallsInOtherPolygon(generated, targets, t)
+      }
       let rate = (target.size && generated.length > 0) ? generated.length / target.size * 100 : null
       let sameCrs = get(target.crs, "authid") === outCrsId
       for (let i = 0; i < generated.length; i++) {
@@ -146,7 +153,7 @@ Item {
         }
         points.push({
           x: p.x, y: p.y,
-          name: target.name + " Sample " + (i + 1),
+          name: target.name + " Sample " + (i + 1) + " " + runTime,
           featureId: target.id,
           rate: rate
         })
@@ -171,7 +178,31 @@ Item {
       log("Partial result: requested " + requested + ", generated " + points.length)
     }
     mainWindow.displayToast(message)
+    if (overlapping) {
+      log("Overlap detected between selected polygons")
+      mainWindow.displayToast(qsTr("Some selected polygons overlap, so the overlapping areas are sampled more than once."))
+    }
     log("Completed: " + points.length + " points added")
+  }
+
+  // True if any point lies inside another selected polygon of the same CRS.
+  // Only detects overlap that the sampled points happen to land in.
+  function fallsInOtherPolygon(generated, targets, self) {
+    let crsId = get(targets[self].crs, "authid")
+    for (let o = 0; o < targets.length; o++) {
+      let other = targets[o]
+      if (o === self || other.kind !== "polygon" || get(other.crs, "authid") !== crsId) {
+        continue
+      }
+      for (let i = 0; i < generated.length; i++) {
+        let candidate = geometryUtils.createGeometryFromWkt(
+            "POINT(" + generated[i].x + " " + generated[i].y + ")")
+        if (geometryUtils.geometryWithin(candidate, other.geometry)) {
+          return true
+        }
+      }
+    }
+    return false
   }
 
   function reprojectPoint(p, fromCrs, toCrs) {
@@ -517,6 +548,20 @@ Item {
     return "Sample Points"
   }
 
+  // Name for layers created by this run; the plain layerName() is kept for the
+  // project layer so that it is still found and synced
+  function newLayerName() {
+    return layerName() + " " + runTime
+  }
+
+  function pad2(n) {
+    return (n < 10 ? "0" : "") + n
+  }
+
+  function timeLabel(date) {
+    return pad2(date.getHours()) + ":" + pad2(date.getMinutes()) + ":" + pad2(date.getSeconds())
+  }
+
   // Polygon area in m2; assumes a projected CRS with metre units
   function areaSquareMeters(geometry) {
     return attempt("area", function() {
@@ -561,14 +606,14 @@ Item {
     return total
   }
 
-  // Adds the points to a layer having Name, InFeature, Created and SamplingRate fields
+  // Adds the points to a layer having Name, InFeature, Created and RunSamplingPct fields
   function fillLayer(layer, points, attrs) {
     let nameIndex = layer.fields.indexOf("Name")
     let featureIndex = layer.fields.indexOf("InFeature")
     let createdIndex = layer.fields.indexOf("Created")
-    let rateIndex = layer.fields.indexOf("SamplingRate")
+    let rateIndex = layer.fields.indexOf("RunSamplingPct")
     log("Field indexes: Name=" + nameIndex + ", InFeature=" + featureIndex
-        + ", Created=" + createdIndex + ", SamplingRate=" + rateIndex)
+        + ", Created=" + createdIndex + ", RunSamplingPct=" + rateIndex)
     if (nameIndex < 0 || featureIndex < 0 || createdIndex < 0 || rateIndex < 0) {
       return false
     }
@@ -592,7 +637,7 @@ Item {
     return true
   }
 
-  // Memory layer with Name, InFeature (Integer), Created (DateTime) and SamplingRate (Double, %)
+  // Memory layer with Name, InFeature (Integer), Created (DateTime) and RunSamplingPct (Double, %)
   function createTypedLayer(points, crs, attrs) {
     try {
       if (!featureUtils) {
@@ -601,8 +646,8 @@ Item {
       }
       let uri = "Point?crs=" + get(crs, "authid")
           + "&field=Name:string(50)&field=InFeature:integer64"
-          + "&field=Created:datetime&field=SamplingRate:double"
-      let layer = layerUtils.loadVectorLayer(uri, layerName(), "memory")
+          + "&field=Created:datetime&field=RunSamplingPct:double"
+      let layer = layerUtils.loadVectorLayer(uri, newLayerName(), "memory")
       if (!layer || !get(layer, "isValid")) {
         log("Memory layer with typed fields is invalid; uri=" + uri)
         return null
@@ -622,7 +667,7 @@ Item {
         properties.InFeature = p.featureId
       }
       if (p.rate !== null) {
-        properties.SamplingRate = p.rate
+        properties.RunSamplingPct = p.rate
       }
       return {
         type: "Feature",
@@ -631,7 +676,7 @@ Item {
       }
     })
     let geojson = JSON.stringify({ type: "FeatureCollection", features: features })
-    return layerUtils.memoryLayerFromJsonString(layerName(), geojson, crs)
+    return layerUtils.memoryLayerFromJsonString(newLayerName(), geojson, crs)
   }
 
   // Saves the in-memory layer to a GeoPackage in the project folder and reloads it
@@ -648,7 +693,7 @@ Item {
       if (!result) {
         return null
       }
-      let fileLayer = layerUtils.loadVectorLayer(result, layerName(), "ogr")
+      let fileLayer = layerUtils.loadVectorLayer(result, newLayerName(), "ogr")
       return (fileLayer && get(fileLayer, "isValid")) ? { layer: fileLayer, path: result } : null
     })
 
@@ -663,7 +708,7 @@ Item {
   // Appends to the shared GeoPackage if it already exists; returns the layer or null
   function appendToExisting(path, points, attrs) {
     return attempt("append to existing GeoPackage", function() {
-      let existing = layerUtils.loadVectorLayer(path, layerName(), "ogr")
+      let existing = layerUtils.loadVectorLayer(path, newLayerName(), "ogr")
       if (!existing || !get(existing, "isValid")) {
         return null
       }
@@ -677,13 +722,17 @@ Item {
     })
   }
 
+  // Looks under the plain name and every name this session gave to a created layer
   function layerAlreadyInProject(path) {
     return attempt("find layer in project", function() {
-      let found = qgisProject.mapLayersByName(layerName())
-      for (let i = 0; found && i < found.length; i++) {
-        let source = String(get(found[i], "source")).split("|")[0]
-        if (source.replace(/\\/g, "/") === path) {
-          return true
+      let names = [layerName()].concat(createdLayerNames)
+      for (let n = 0; n < names.length; n++) {
+        let found = qgisProject.mapLayersByName(names[n])
+        for (let i = 0; found && i < found.length; i++) {
+          let source = String(get(found[i], "source")).split("|")[0]
+          if (source.replace(/\\/g, "/") === path) {
+            return true
+          }
         }
       }
       return false
@@ -776,6 +825,7 @@ Item {
       return false
     }
     log("Output layer added to project")
+    createdLayerNames = createdLayerNames.concat([newLayerName()])
     return true
   }
 }

@@ -14,20 +14,21 @@ features in the identify list), then tap the plugin toolbar button. The dialog
 lists the selected features with their size (m² for polygons, m for lines) and
 asks how many points to create **in each** feature.
 
-- Polygons: points are sampled randomly inside each polygon.
+- Polygons: points are sampled randomly inside each polygon. Overlapping polygons are sampled independently, so overlapping areas receive more points; the plugin shows a notice when it detects this.
 - Lines: points are placed at random distances along each line.
-- Nothing selected: points are sampled inside the visible map extent.
+- Nothing selected: points are sampled inside the visible map extent. No sampling rate is reported.
 
-Polygons and lines must be in a projected CRS with metre units (not degrees).
+How to select multiple lines or polygons in QField: multi-selection mode is available by long-pressing on a layer name or an attribute form. 
+Polygons and lines should be in a projected CRS with meter units (not degrees).
 
 ## Output attributes
 
 | Field       | Type          | Content                                                        |
 |-------------|---------------|----------------------------------------------------------------|
-| `Name`      | Text (50)     | `<feature name> Sample <n>`, e.g. `Lake Sample 2`             |
+| `Name`      | Text (50)     | `<feature name> Sample <n> <HH:mm:ss>`, e.g. `Lake Sample 2 14:32:05` |
 | `InFeature` | Integer       | FID of the polygon or line the point belongs to (empty for map extent) |
 | `Created`   | Date/time     | Full creation date and time of each point                      |
-| `SamplingRate` | Decimal   | Percent of the feature sampled, assuming 1 m² (polygons) or 1 m (lines) per point: points ÷ area or length × 100 |
+| `RunSamplingPct` | Decimal   | Percent of the feature sampled, assuming 1 m² (polygons) or 1 m (lines) per point: points ÷ area or length × 100 |
 
 The feature name is read from the first non-empty field called `Name`, `Label`
 or `Title` (case-insensitive, in that order). If none exists, `Polygon <FID>`
@@ -44,7 +45,7 @@ plugin writes into a layer that already exists in your project when it can.
    the new points as ordinary edits and bring them back to Desktop.
 2. **Fallback (does not sync).** If there is no such layer, or it cannot be
    written to, the plugin creates `sample_points.gpkg` in the project folder
-   (appending on later runs) and adds it as `Sample Points`. This file is not
+   (appending on later runs) and adds it as `Sample Points <HH:mm:ss>` (time of the run). This file is not
    part of the project, so it is not synced automatically. Copy it off the
    device and add it in QGIS Desktop.
 
@@ -58,7 +59,7 @@ plugin writes into a layer that already exists in your project when it can.
    - `Name`: Text (string), length 50, for labeling
    - `InFeature`: Integer (64 bit), for joining with feature
    - `Created`: Date & Time, now
-   - `SamplingRate`: Decimal (double). Percent of the feature sampled, assuming 1 m² per point for polygons or 1 m per point for lines
+   - `RunSamplingPct`: Decimal (double). Percent of the feature sampled, assuming 1 m² per point for polygons or 1 m per point for lines
 4. Add the layer to the project, name it `Sample Points`, and make sure it is
    editable (do not set it read-only).
 5. Package for QField with QFieldSync or push to QFieldCloud as usual. Set the
