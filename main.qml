@@ -127,19 +127,57 @@ Item {
         text: plugin.selectionSummary
       }
 
+      ComboBox {
+        id: modeBox
+        width: parent.width
+        model: [qsTr("Number of points per feature"),
+                qsTr("Density (per 1,000 m\u00b2 or per 100 m of line)")]
+      }
+
       SpinBox {
         id: pointCount
+        visible: modeBox.currentIndex === 0
         from: 1
         to: 5000
         value: plugin.requestedPointCount
         editable: true
       }
+
+      TextField {
+        id: densityField
+        visible: modeBox.currentIndex === 1
+        width: parent.width
+        text: "1"
+        placeholderText: qsTr("Points per 1,000 m\u00b2 / per 100 m")
+        inputMethodHints: Qt.ImhFormattedNumbersOnly
+      }
+
+      Label {
+        text: qsTr("Minimum distance between points (m, 0 = off)")
+        width: parent.width
+        wrapMode: Text.WordWrap
+      }
+
+      SpinBox {
+        id: minDistance
+        from: 0
+        to: 10000
+        value: 0
+        editable: true
+      }
     }
 
     onAccepted: {
+      let density = parseFloat(String(densityField.text).replace(",", "."))
+      let options = {
+        mode: modeBox.currentIndex === 1 ? "density" : "count",
+        count: pointCount.value,
+        density: isNaN(density) ? 0 : density,
+        minDistance: minDistance.value
+      }
       plugin.requestedPointCount = pointCount.value
-      log("Generation requested for " + pointCount.value + " points")
-      plugin.generatePoints(pointCount.value)
+      log("Generation requested: " + JSON.stringify(options))
+      plugin.generatePoints(options)
     }
   }
 
@@ -164,16 +202,29 @@ Item {
     return typeof member === "function" ? obj[name]() : member
   }
 
-  function generatePoints(pointCount) {
+  function generatePoints(options) {
     try {
-      generatePointsUnsafe(pointCount)
+      generatePointsUnsafe(options)
     } catch (e) {
       log("ERROR: " + e)
       mainWindow.displayToast(qsTr("Random Pointcaster error: %1").arg(e))
     }
   }
 
-  function generatePointsUnsafe(pointCount) {
+  // Points for one target: fixed count, or density x size
+  // (per 1,000 m2 for polygons, per 100 m for lines)
+  function pointsForTarget(target, options) {
+    if (options.mode !== "density") {
+      return options.count
+    }
+    if (!target.size || !(options.density > 0)) {
+      return 0
+    }
+    let unit = target.kind === "line" ? 100 : 1000
+    return Math.max(1, Math.round(target.size / unit * options.density))
+  }
+
+  function generatePointsUnsafe(options) {
     log("Starting point generation; helpers: geometry=" + (geometryUtils ? "ok" : "MISSING")
         + ", layer=" + (layerUtils ? "ok" : "MISSING")
         + ", project=" + (projectUtils ? "ok" : "MISSING"))
@@ -197,9 +248,18 @@ Item {
     let outCrsId = get(outCrs, "authid")
     let points = []
     let overlapping = false
+    let requested = 0
+    let placedByCrs = {}
     for (let t = 0; t < targets.length; t++) {
       let target = targets[t]
-      let generated = sampleTarget(target, pointCount)
+      let pointCount = pointsForTarget(target, options)
+      requested += pointCount
+      let crsKey = get(target.crs, "authid")
+      if (!placedByCrs[crsKey]) {
+        placedByCrs[crsKey] = []
+      }
+      let generated = pointCount > 0
+          ? sampleTarget(target, pointCount, placedByCrs[crsKey], options.minDistance) : []
       log("Target " + target.name + " (" + target.kind + "): " + generated.length
           + " of " + pointCount + " points")
       if (!overlapping && target.kind === "polygon") {
@@ -221,10 +281,11 @@ Item {
       }
     }
 
-    let requested = pointCount * targets.length
     if (points.length === 0) {
       log("Failed: generated 0 points")
-      mainWindow.displayToast(qsTr("No points could be generated on the selected features."))
+      mainWindow.displayToast(options.mode === "density" && requested === 0
+          ? qsTr("Density needs a positive value and a feature with a known size.")
+          : qsTr("No points could be generated on the selected features."))
       return
     }
 
@@ -235,7 +296,9 @@ Item {
 
     let message = qsTr("Created %1 random points").arg(points.length)
     if (points.length < requested) {
-      message += qsTr(" (requested %1)").arg(requested)
+      message += options.minDistance > 0
+          ? qsTr(" (requested %1; minimum distance too large for the rest)").arg(requested)
+          : qsTr(" (requested %1)").arg(requested)
       log("Partial result: requested " + requested + ", generated " + points.length)
     }
     mainWindow.displayToast(message)
@@ -277,7 +340,23 @@ Item {
   }
 
   // Random points inside a polygon (or the map extent), by rejection sampling
-  function samplePolygon(target, pointCount) {
+  // True if (x, y) is within minDistance of any point already placed in this run
+  function tooClose(x, y, placed, minDistance) {
+    if (!(minDistance > 0)) {
+      return false
+    }
+    let limit = minDistance * minDistance
+    for (let i = 0; i < placed.length; i++) {
+      let dx = placed[i].x - x
+      let dy = placed[i].y - y
+      if (dx * dx + dy * dy < limit) {
+        return true
+      }
+    }
+    return false
+  }
+
+  function samplePolygon(target, pointCount, placed, minDistance) {
     let bounds = geometryUtils.boundingBox(target.geometry)
     let xMin = get(bounds, "xMinimum")
     let xMax = get(bounds, "xMaximum")
@@ -290,21 +369,24 @@ Item {
       attempts += 1
       let x = xMin + Math.random() * (xMax - xMin)
       let y = yMin + Math.random() * (yMax - yMin)
-      if (target.kind === "extent") {
-        points.push({ x: x, y: y })
+      if (tooClose(x, y, placed, minDistance)) {
         continue
       }
-      let candidate = geometryUtils.createGeometryFromWkt("POINT(" + x + " " + y + ")")
-      if (geometryUtils.geometryWithin(candidate, target.geometry)) {
-        points.push({ x: x, y: y })
+      if (target.kind !== "extent") {
+        let candidate = geometryUtils.createGeometryFromWkt("POINT(" + x + " " + y + ")")
+        if (!geometryUtils.geometryWithin(candidate, target.geometry)) {
+          continue
+        }
       }
+      points.push({ x: x, y: y })
+      placed.push({ x: x, y: y })
     }
     return points
   }
 
   // Random points at uniformly random distances along a (multi)line,
   // returned in order along the line
-  function sampleLine(target, pointCount) {
+  function sampleLine(target, pointCount, placed, minDistance) {
     let parts = linePartsFromWkt(get(target.geometry, "asWkt"))
     let segments = []
     let total = 0
@@ -322,28 +404,33 @@ Item {
     if (segments.length === 0) {
       return []
     }
-    let distances = []
-    for (let i = 0; i < pointCount; i++) {
-      distances.push(Math.random() * total)
-    }
-    distances.sort(function(m, n) { return m - n })
-    let points = []
-    let s = 0
-    for (let i = 0; i < distances.length; i++) {
-      while (s < segments.length - 1 && distances[i] > segments[s].start + segments[s].length) {
+    let accepted = []
+    let attempts = 0
+    let maxAttempts = pointCount * 200
+    while (accepted.length < pointCount && attempts < maxAttempts) {
+      attempts += 1
+      let d = Math.random() * total
+      let s = 0
+      while (s < segments.length - 1 && d > segments[s].start + segments[s].length) {
         s++
       }
       let seg = segments[s]
-      let f = Math.min(1, (distances[i] - seg.start) / seg.length)
-      points.push({ x: seg.a[0] + f * (seg.b[0] - seg.a[0]),
-                    y: seg.a[1] + f * (seg.b[1] - seg.a[1]) })
+      let f = Math.min(1, (d - seg.start) / seg.length)
+      let x = seg.a[0] + f * (seg.b[0] - seg.a[0])
+      let y = seg.a[1] + f * (seg.b[1] - seg.a[1])
+      if (tooClose(x, y, placed, minDistance)) {
+        continue
+      }
+      accepted.push({ d: d, x: x, y: y })
+      placed.push({ x: x, y: y })
     }
-    return points
+    accepted.sort(function(m, n) { return m.d - n.d })
+    return accepted.map(function(a) { return { x: a.x, y: a.y } })
   }
 
-  function sampleTarget(target, pointCount) {
-    return target.kind === "line" ? sampleLine(target, pointCount)
-                                  : samplePolygon(target, pointCount)
+  function sampleTarget(target, pointCount, placed, minDistance) {
+    return target.kind === "line" ? sampleLine(target, pointCount, placed, minDistance)
+                                  : samplePolygon(target, pointCount, placed, minDistance)
   }
 
   // Vertex lists [[x, y], ...] for each part of a LineString / MultiLineString WKT

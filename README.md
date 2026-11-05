@@ -4,7 +4,7 @@ This is a QField app-wide plugin written in QML/JavaScript.
 
 ## Install
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
-https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.2.5.zip
+https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.3.0.zip
 
 Look for a tool in the top right corner of screen. 
 
@@ -19,7 +19,9 @@ asks how many points to create **in each** feature.
 
 - Polygons: points are sampled randomly inside each polygon. Overlapping polygons are sampled independently, so overlapping areas receive more points; the plugin shows a notice when it detects this.
 - Lines: points are placed at random distances along each line.
-- Nothing selected: points are sampled inside the visible map extent. No sampling rate is reported.
+- Nothing selected: points are sampled inside the visible map extent. No sampling rate is reported. Density mode is not available for the map extent.
+- **Number or density:** choose a fixed number of points per feature, or a density (points per 1,000 m² for polygons, per 100 m for lines). With density, each feature gets `round(size × density)` points, at least 1.
+- **Minimum distance (m):** optional. No two points from one run (across all selected features) will be closer than this. If it can't be met after 200 tries per point, fewer points are created and the notice says so. Points from earlier runs are not considered.
 
 How to select multiple lines or polygons in QField: multi-selection mode is available by long-pressing on a layer name or an attribute form. 
 Polygons and lines should be in a projected CRS with meter units (not degrees).
