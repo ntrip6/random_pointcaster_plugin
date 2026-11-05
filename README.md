@@ -8,7 +8,7 @@ https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_p
 
 Look for a tool in the top right corner of screen. 
 
-In order for the Sample Points to be synced back to QGIS begin by adding (link to template) this file to the GIS project prior to packaging for QField or QFieldCloud. The template field attributes expected by the plugin tool are listed below.
+In order for the Sample Points to be synced back to QGIS begin by adding [the template](template/random_pointcaster_template.gpkg) file to the GIS project prior to packaging for QField or QFieldCloud. The template field attributes expected by the plugin tool are listed below.
 
 ## Use
 
@@ -89,10 +89,20 @@ Fields are `Name`, `InFeature`, `Created` and `RunSamplingPct`.
 
 ### Set up in QGIS Desktop before packaging or syncing
 
+**Easiest:** copy [`template/random_pointcaster_template.gpkg`](template/random_pointcaster_template.gpkg)
+into your project folder and add its `Sample Points` layer to the project. It is
+EPSG:4326 (so no UTM zone to worry about), already has the fields below, and
+carries a default style that labels each point with just its sample number in
+a small font, visible only at scales of 1:10,000 or larger. Then skip to step 4.
+(Sampling and sizes are still computed in the CRS of your polygons/lines; points
+are reprojected to 4326 on write.)
+
+**Or build it by hand:**
+
 1. Create a GeoPackage in the project folder, e.g. `sample_points.gpkg`
    (**Layer > Create Layer > New GeoPackage Layer**).
-2. Table/layer name `Sample Points`, geometry type **Point**, and the same CRS
-   as your polygons (other CRSs are reprojected, but matching is safest).
+2. Table/layer name `Sample Points`, geometry type **Point**, CRS EPSG:4326
+   (other CRSs are reprojected).
 3. Add exactly these fields (names are case-sensitive):
    - `Name`: Text (string), length 50, for labeling
    - `InFeature`: Integer (64 bit), for joining with feature
