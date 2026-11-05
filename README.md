@@ -1,4 +1,4 @@
-# Random Pointcaster Plugin for QField
+﻿# Random Pointcaster Plugin for QField
 
 This is a QField app-wide plugin written in QML/JavaScript. QField does not
 load the Python plugin API used by QGIS Desktop.
@@ -27,7 +27,7 @@ Polygons and lines must be in a projected CRS with metre units (not degrees).
 | Field       | Type          | Content                                                        |
 |-------------|---------------|----------------------------------------------------------------|
 | `Name`      | Text (50)     | `<feature name> Sample <n>`, e.g. `Lake Sample 2`             |
-| `InPolygon` | Integer       | FID of the polygon or line the point belongs to (empty for map extent) |
+| `InFeature` | Integer       | FID of the polygon or line the point belongs to (empty for map extent) |
 | `Created`   | Date/time     | Full creation date and time of each point                      |
 | `Rate`      | Decimal       | Points for that feature divided by its area in m² (polygons) or length in m (lines) |
 
@@ -58,7 +58,7 @@ plugin writes into a layer that already exists in your project when it can.
    as your polygons (other CRSs are reprojected, but matching is safest).
 3. Add exactly these fields (names are case-sensitive):
    - `Name`: Text (string), length 50
-   - `InPolygon`: Integer (64 bit)
+   - `InFeature`: Integer (64 bit)
    - `Created`: Date & Time
    - `Rate`: Decimal (double)
 4. Add the layer to the project, name it `Sample Points`, and make sure it is

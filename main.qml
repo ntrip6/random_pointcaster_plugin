@@ -147,7 +147,7 @@ Item {
         points.push({
           x: p.x, y: p.y,
           name: target.name + " Sample " + (i + 1),
-          polygonId: target.id,
+          featureId: target.id,
           rate: rate
         })
       }
@@ -561,15 +561,15 @@ Item {
     return total
   }
 
-  // Adds the points to a layer having Name, InPolygon, Created and Rate fields
+  // Adds the points to a layer having Name, InFeature, Created and Rate fields
   function fillLayer(layer, points, attrs) {
     let nameIndex = layer.fields.indexOf("Name")
-    let polyIndex = layer.fields.indexOf("InPolygon")
+    let featureIndex = layer.fields.indexOf("InFeature")
     let createdIndex = layer.fields.indexOf("Created")
     let rateIndex = layer.fields.indexOf("Rate")
-    log("Field indexes: Name=" + nameIndex + ", InPolygon=" + polyIndex
+    log("Field indexes: Name=" + nameIndex + ", InFeature=" + featureIndex
         + ", Created=" + createdIndex + ", Rate=" + rateIndex)
-    if (nameIndex < 0 || polyIndex < 0 || createdIndex < 0 || rateIndex < 0) {
+    if (nameIndex < 0 || featureIndex < 0 || createdIndex < 0 || rateIndex < 0) {
       return false
     }
     for (let i = 0; i < points.length; i++) {
@@ -577,8 +577,8 @@ Item {
           "POINT(" + points[i].x + " " + points[i].y + ")")
       let feature = featureUtils.createBlankFeature(layer.fields, geometry)
       feature.setAttribute(nameIndex, points[i].name)
-      if (points[i].polygonId !== null) {
-        feature.setAttribute(polyIndex, points[i].polygonId)
+      if (points[i].featureId !== null) {
+        feature.setAttribute(featureIndex, points[i].featureId)
       }
       feature.setAttribute(createdIndex, attrs.created)
       if (points[i].rate !== null) {
@@ -592,7 +592,7 @@ Item {
     return true
   }
 
-  // Memory layer with Name, InPolygon (Integer), Created (DateTime) and Rate (Double)
+  // Memory layer with Name, InFeature (Integer), Created (DateTime) and Rate (Double)
   function createTypedLayer(points, crs, attrs) {
     try {
       if (!featureUtils) {
@@ -600,7 +600,7 @@ Item {
         return null
       }
       let uri = "Point?crs=" + get(crs, "authid")
-          + "&field=Name:string(50)&field=InPolygon:integer64"
+          + "&field=Name:string(50)&field=InFeature:integer64"
           + "&field=Created:datetime&field=Rate:double"
       let layer = layerUtils.loadVectorLayer(uri, layerName(), "memory")
       if (!layer || !get(layer, "isValid")) {
@@ -618,8 +618,8 @@ Item {
   function createGeoJsonLayer(points, crs, attrs) {
     let features = points.map(function(p, i) {
       let properties = { Name: p.name, Created: attrs.created.toISOString() }
-      if (p.polygonId !== null) {
-        properties.InPolygon = p.polygonId
+      if (p.featureId !== null) {
+        properties.InFeature = p.featureId
       }
       if (p.rate !== null) {
         properties.Rate = p.rate
@@ -715,7 +715,7 @@ Item {
         log("Reprojecting points " + sourceCrsId + " -> " + layerCrsId)
         pts = points.map(function(p) {
           let q = reprojectPoint(p, target.crs, layerCrs(layer))
-          return { x: q.x, y: q.y, name: p.name, polygonId: p.polygonId, rate: p.rate }
+          return { x: q.x, y: q.y, name: p.name, featureId: p.featureId, rate: p.rate }
         })
       }
       let before = get(layer, "featureCount")
