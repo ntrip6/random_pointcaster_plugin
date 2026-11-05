@@ -4,7 +4,7 @@ This is a QField app-wide plugin written in QML/JavaScript.
 
 ## Install
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
-
+https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.2.2.zip
 Zip contains `main.qml`, `metadata.txt`, and `icon.svg`  at the root of the archive.
 
 ## Use
