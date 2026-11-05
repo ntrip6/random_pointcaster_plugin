@@ -11,24 +11,29 @@ Zip the contents of this folder so that `main.qml`, `metadata.txt`, and
 
 ## Use
 
-Select a polygon (open its feature form), tap the plugin toolbar button, and
-choose a point count. Points are sampled inside the selected polygon. With no
-polygon selected, they are sampled inside the visible map extent.
+Select one or more polygons or lines (open the feature form, or multi-select
+features in the identify list), then tap the plugin toolbar button. The dialog
+lists the selected features with their size (m² for polygons, m for lines) and
+asks how many points to create **in each** feature.
 
-Polygons must be in a projected CRS with metre units (not degrees).
+- Polygons: points are sampled randomly inside each polygon.
+- Lines: points are placed at random distances along each line.
+- Nothing selected: points are sampled inside the visible map extent.
+
+Polygons and lines must be in a projected CRS with metre units (not degrees).
 
 ## Output attributes
 
 | Field       | Type          | Content                                                        |
 |-------------|---------------|----------------------------------------------------------------|
-| `Name`      | Text (50)     | `<polygon name> Sample <n>`, e.g. `Lake Sample 2`             |
-| `InPolygon` | Integer       | FID of the polygon containing the point (empty for map extent) |
+| `Name`      | Text (50)     | `<feature name> Sample <n>`, e.g. `Lake Sample 2`             |
+| `InPolygon` | Integer       | FID of the polygon or line the point belongs to (empty for map extent) |
 | `Created`   | Date/time     | Full creation date and time of each point                      |
-| `Rate`      | Decimal       | Points in this run divided by polygon area in m2 (1 m2 per sample) |
+| `Rate`      | Decimal       | Points for that feature divided by its area in m² (polygons) or length in m (lines) |
 
-The polygon name is read from the first non-empty field called `Name`, `Label`
+The feature name is read from the first non-empty field called `Name`, `Label`
 or `Title` (case-insensitive, in that order). If none exists, `Polygon <FID>`
-is used. Without a polygon, the name is `Map extent`.
+or `Line <FID>` is used. Without a selection, the name is `Map extent`.
 
 ## Where the points go, and syncing back to QGIS Desktop
 

@@ -11,7 +11,8 @@ Item {
   property var mainWindow: iface.mainWindow()
   property var mapCanvas: iface.mapCanvas()
   property int requestedPointCount: 1
-  property var pendingTarget: null
+  property var pendingTargets: []
+  property string selectionSummary: ""
 
   Component.onCompleted: {
     log("Plugin loaded")
@@ -30,10 +31,12 @@ Item {
       log("Toolbar button clicked")
       // Capture the selection now; opening the dialog may clear it
       try {
-        plugin.pendingTarget = plugin.targetGeometryAndCrs()
+        plugin.pendingTargets = plugin.collectTargets()
+        plugin.selectionSummary = plugin.describeTargets(plugin.pendingTargets)
       } catch (e) {
-        plugin.pendingTarget = null
-        log("ERROR capturing target: " + e)
+        plugin.pendingTargets = []
+        plugin.selectionSummary = ""
+        log("ERROR capturing targets: " + e)
       }
       countDialog.open()
       log("Dialog open() called; visible=" + countDialog.visible)
@@ -53,8 +56,12 @@ Item {
     contentItem: Column {
       spacing: 12
 
+      width: countDialog.availableWidth
+
       Label {
-        text: qsTr("Number of points to generate:")
+        width: parent.width
+        wrapMode: Text.WordWrap
+        text: plugin.selectionSummary
       }
 
       SpinBox {
@@ -111,33 +118,87 @@ Item {
       mainWindow.displayToast(qsTr("Random Pointcaster: this QField version lacks required helpers."))
       return
     }
-    let target = pendingTarget
-    pendingTarget = null
-    if (!target) {
-      target = targetGeometryAndCrs()
+    let targets = pendingTargets
+    pendingTargets = []
+    if (!targets || targets.length === 0) {
+      targets = collectTargets()
     }
-    if (!target || get(target.geometry, "isEmpty")) {
-      log("Failed: target geometry is missing or empty")
-      mainWindow.displayToast(qsTr("No valid polygon or map extent is available."))
+    if (!targets || targets.length === 0) {
+      log("Failed: no targets")
+      mainWindow.displayToast(qsTr("No valid polygon, line or map extent is available."))
       return
     }
 
+    let outCrs = targets[0].crs
+    let outCrsId = get(outCrs, "authid")
+    let points = []
+    for (let t = 0; t < targets.length; t++) {
+      let target = targets[t]
+      let generated = sampleTarget(target, pointCount)
+      log("Target " + target.name + " (" + target.kind + "): " + generated.length
+          + " of " + pointCount + " points")
+      let rate = (target.size && generated.length > 0) ? generated.length / target.size : null
+      let sameCrs = get(target.crs, "authid") === outCrsId
+      for (let i = 0; i < generated.length; i++) {
+        let p = generated[i]
+        if (!sameCrs) {
+          p = reprojectPoint(p, target.crs, outCrs)
+        }
+        points.push({
+          x: p.x, y: p.y,
+          name: target.name + " Sample " + (i + 1),
+          polygonId: target.id,
+          rate: rate
+        })
+      }
+    }
+
+    let requested = pointCount * targets.length
+    if (points.length === 0) {
+      log("Failed: generated 0 points")
+      mainWindow.displayToast(qsTr("No points could be generated on the selected features."))
+      return
+    }
+
+    if (!addOutputLayer(points, { crs: outCrs })) {
+      log("Failed: output layer creation did not complete")
+      return
+    }
+
+    let message = qsTr("Created %1 random points").arg(points.length)
+    if (points.length < requested) {
+      message += qsTr(" (requested %1)").arg(requested)
+      log("Partial result: requested " + requested + ", generated " + points.length)
+    }
+    mainWindow.displayToast(message)
+    log("Completed: " + points.length + " points added")
+  }
+
+  function reprojectPoint(p, fromCrs, toCrs) {
+    let g = geometryUtils.createGeometryFromWkt("POINT(" + p.x + " " + p.y + ")")
+    let r = geometryUtils.reprojectGeometry(g, fromCrs, toCrs)
+    let m = String(get(r, "asWkt")).match(/\(\s*(\S+)\s+(\S+)\s*\)/)
+    if (!m) {
+      throw new Error("reprojection failed")
+    }
+    return { x: parseFloat(m[1]), y: parseFloat(m[2]) }
+  }
+
+  // Random points inside a polygon (or the map extent), by rejection sampling
+  function samplePolygon(target, pointCount) {
     let bounds = geometryUtils.boundingBox(target.geometry)
     let xMin = get(bounds, "xMinimum")
     let xMax = get(bounds, "xMaximum")
     let yMin = get(bounds, "yMinimum")
     let yMax = get(bounds, "yMaximum")
-    log("Bounds: " + xMin + "," + yMin + " to " + xMax + "," + yMax
-        + "; polygon test: " + !target.isExtent)
     let points = []
     let attempts = 0
     let maxAttempts = pointCount * 200
-
     while (points.length < pointCount && attempts < maxAttempts) {
       attempts += 1
       let x = xMin + Math.random() * (xMax - xMin)
       let y = yMin + Math.random() * (yMax - yMin)
-      if (target.isExtent) {
+      if (target.kind === "extent") {
         points.push({ x: x, y: y })
         continue
       }
@@ -146,26 +207,110 @@ Item {
         points.push({ x: x, y: y })
       }
     }
+    return points
+  }
 
-    if (points.length === 0) {
-      log("Failed: generated 0 points after " + attempts + " attempts")
-      mainWindow.displayToast(qsTr("No points could be generated inside the selected area."))
-      return
+  // Random points at uniformly random distances along a (multi)line,
+  // returned in order along the line
+  function sampleLine(target, pointCount) {
+    let parts = linePartsFromWkt(get(target.geometry, "asWkt"))
+    let segments = []
+    let total = 0
+    for (let p = 0; p < parts.length; p++) {
+      for (let i = 0; i < parts[p].length - 1; i++) {
+        let a = parts[p][i]
+        let b = parts[p][i + 1]
+        let length = Math.hypot(b[0] - a[0], b[1] - a[1])
+        if (length > 0) {
+          segments.push({ a: a, b: b, start: total, length: length })
+          total += length
+        }
+      }
     }
+    if (segments.length === 0) {
+      return []
+    }
+    let distances = []
+    for (let i = 0; i < pointCount; i++) {
+      distances.push(Math.random() * total)
+    }
+    distances.sort(function(m, n) { return m - n })
+    let points = []
+    let s = 0
+    for (let i = 0; i < distances.length; i++) {
+      while (s < segments.length - 1 && distances[i] > segments[s].start + segments[s].length) {
+        s++
+      }
+      let seg = segments[s]
+      let f = Math.min(1, (distances[i] - seg.start) / seg.length)
+      points.push({ x: seg.a[0] + f * (seg.b[0] - seg.a[0]),
+                    y: seg.a[1] + f * (seg.b[1] - seg.a[1]) })
+    }
+    return points
+  }
 
-    log("Generated " + points.length + " points after " + attempts + " attempts")
-    if (!addOutputLayer(points, target)) {
-      log("Failed: output layer creation did not complete")
-      return
-    }
+  function sampleTarget(target, pointCount) {
+    return target.kind === "line" ? sampleLine(target, pointCount)
+                                  : samplePolygon(target, pointCount)
+  }
 
-    let message = qsTr("Created %1 random points").arg(points.length)
-    if (points.length < pointCount) {
-      message += qsTr(" (requested %1)").arg(pointCount)
-      log("Partial result: requested " + pointCount + ", generated " + points.length)
+  // Vertex lists [[x, y], ...] for each part of a LineString / MultiLineString WKT
+  function linePartsFromWkt(wkt) {
+    if (typeof wkt !== "string") {
+      return []
     }
-    mainWindow.displayToast(message)
-    log("Completed: " + points.length + " points added")
+    let groups = wkt.match(/\(([^()]+)\)/g) || []
+    return groups.map(function(g) {
+      return g.slice(1, -1).split(",").map(function(pt) {
+        let c = pt.trim().split(/\s+/)
+        return [parseFloat(c[0]), parseFloat(c[1])]
+      })
+    }).filter(function(pts) { return pts.length >= 2 })
+  }
+
+  // Line length in m; assumes a projected CRS with metre units
+  function lengthMeters(geometry) {
+    return attempt("length", function() {
+      let parts = linePartsFromWkt(get(geometry, "asWkt"))
+      let total = 0
+      for (let p = 0; p < parts.length; p++) {
+        for (let i = 0; i < parts[p].length - 1; i++) {
+          total += Math.hypot(parts[p][i + 1][0] - parts[p][i][0],
+                              parts[p][i + 1][1] - parts[p][i][1])
+        }
+      }
+      return total > 0 ? total : null
+    })
+  }
+
+  function formatSize(target) {
+    if (!target.size) {
+      return ""
+    }
+    let value = target.kind === "line" ? Math.round(target.size * 10) / 10
+                                       : Math.round(target.size)
+    return " (" + value + (target.kind === "line" ? " m)" : " m\u00b2)")
+  }
+
+  function describeTargets(targets) {
+    if (!targets || targets.length === 0) {
+      return qsTr("Nothing selected. Number of points to generate:")
+    }
+    if (targets[0].kind === "extent") {
+      return qsTr("No polygon or line selected; points will be placed in the visible map extent. Number of points to generate:")
+    }
+    let shown = targets.slice(0, 6).map(function(t) { return t.name + formatSize(t) })
+    let list
+    if (targets.length > shown.length) {
+      list = shown.join(", ") + qsTr(" and %1 more").arg(targets.length - shown.length)
+    } else if (shown.length > 1) {
+      list = shown.slice(0, -1).join(", ") + qsTr(" and ") + shown[shown.length - 1]
+    } else {
+      list = shown[0]
+    }
+    return targets.length > 1
+        ? qsTr("You have selected %1. How many points in each feature?").arg(list)
+        : qsTr("You have selected %1. How many points?").arg(list)
   }
 
   // Feature list model roles (Qt::UserRole = 256): Feature=260, Layer=262, Geometry=263, Selected=258
@@ -190,40 +335,81 @@ Item {
     }
   }
 
-  // A layer whose geometry type can't be read is not rejected here
-  function isPolygonLayer(layer) {
+  // "line" or "polygon" for supported features, otherwise null. The layer's geometry
+  // type is preferred; the geometry's WKT is the fallback when it can't be read.
+  function kindOf(layer, geometry) {
     let type = attempt("geometryType", function() { return get(layer, "geometryType") })
-    return type === null || type === undefined || type == 2
+    if (type == 1) {
+      return "line"
+    }
+    if (type == 2) {
+      return "polygon"
+    }
+    if (type == 0) {
+      return null
+    }
+    let wkt = attempt("asWkt", function() { return String(get(geometry, "asWkt")) })
+    if (wkt && /^\s*(Multi)?(LineString|CompoundCurve|CircularString)/i.test(wkt)) {
+      return "line"
+    }
+    if (wkt && /^\s*(Multi)?(Polygon|CurvePolygon)/i.test(wkt)) {
+      return "polygon"
+    }
+    return null
   }
 
-  function polygonFromModel(model) {
+  // Builds a sampling target from a layer/feature/geometry, or null if unsupported
+  function makeTarget(layer, feature, geometry) {
+    if (!layer || !feature || !geometry || get(geometry, "isEmpty")) {
+      return null
+    }
+    let kind = kindOf(layer, geometry)
+    if (!kind) {
+      return null
+    }
+    let size = kind === "line" ? lengthMeters(geometry) : areaSquareMeters(geometry)
+    let id = feature.id
+    let name = polygonNameOf(feature, layer)
+    return {
+      kind: kind,
+      layer: layer,
+      geometry: geometry,
+      crs: layerCrs(layer),
+      id: id,
+      name: name ? name : (kind === "line" ? "Line " : "Polygon ") + id,
+      size: size
+    }
+  }
+
+  // Selected rows of the feature list model, or if none are selected, the first usable row
+  function targetsFromModel(model) {
     let count = model.count
+    let selected = []
     let fallback = null
     for (let i = 0; i < count; i++) {
       let index = model.index(i, 0)
-      let layer = model.data(index, 262)
-      let geometry = model.data(index, 263)
-      let feature = model.data(index, 260)
-      if (!layer || !geometry || !feature || !isPolygonLayer(layer)
-          || get(geometry, "isEmpty")) {
+      let target = makeTarget(model.data(index, 262), model.data(index, 260),
+                              model.data(index, 263))
+      if (!target) {
         continue
       }
-      let candidate = { layer: layer, geometry: geometry, feature: feature }
       if (model.data(index, 258)) {
-        return candidate
-      }
-      if (!fallback) {
-        fallback = candidate
+        selected.push(target)
+      } else if (!fallback) {
+        fallback = target
       }
     }
-    return fallback
+    if (selected.length > 0) {
+      return selected
+    }
+    return fallback ? [fallback] : []
   }
 
-  function findSelectedPolygon() {
+  function findSelectedTargets() {
     let featureForm = iface.findItemByObjectName("featureForm")
     log("featureForm=" + (featureForm ? "found" : "null"))
     if (!featureForm) {
-      return null
+      return []
     }
 
     let selection = attempt("read selection", function() { return featureForm.selection })
@@ -231,31 +417,30 @@ Item {
     log("selection=" + (selection ? "found" : "null")
         + "; model=" + (model ? "found" : "null"))
 
+    let fromModel = attempt("model source", function() {
+      if (!model) {
+        return []
+      }
+      log("model.count=" + model.count + "; model.selectedCount=" + model.selectedCount)
+      return targetsFromModel(model)
+    }) || []
+    // Several features are only visible through the model; a single one may also be focused
+    if (fromModel.length > 1) {
+      return fromModel
+    }
+
     let focused = attempt("focused source", function() {
       if (!selection || !selection.focusedLayer || !selection.focusedFeature) {
         return null
       }
-      let layer = selection.focusedLayer
-      let geometry = selection.focusedGeometry
-      log("Source 1 (focused): layer=" + layer.name)
-      if (geometry && isPolygonLayer(layer) && !get(geometry, "isEmpty")) {
-        return { layer: layer, geometry: geometry, feature: selection.focusedFeature }
-      }
-      return null
+      log("Source (focused): layer=" + selection.focusedLayer.name)
+      return makeTarget(selection.focusedLayer, selection.focusedFeature,
+                        selection.focusedGeometry)
     })
     if (focused) {
-      return focused
+      return [focused]
     }
-
-    let found = attempt("model source", function() {
-      if (!model) {
-        return null
-      }
-      log("model.count=" + model.count + "; model.selectedCount=" + model.selectedCount)
-      return polygonFromModel(model)
-    })
-    log("Source 2 (model rows): " + (found ? "found polygon in " + found.layer.name : "none"))
-    return found
+    return fromModel
   }
 
   // Value of the polygon's first non-empty "Name", "Label" or "Title" field
@@ -293,31 +478,20 @@ Item {
     })
   }
 
-  function targetGeometryAndCrs() {
+  function collectTargets() {
     lastError = ""
     try {
-      let found = findSelectedPolygon()
-      if (found) {
-        let polygonId = found.feature.id
-        let crs = layerCrs(found.layer)
-        log("Using polygon " + polygonId + " from layer " + found.layer.name
-            + "; CRS=" + get(crs, "authid"))
-        mainWindow.displayToast(qsTr("Random Pointcaster: using polygon %1 from %2")
-            .arg(polygonId).arg(found.layer.name))
-        return {
-          geometry: found.geometry,
-          crs: crs,
-          isExtent: false,
-          polygonId: polygonId,
-          polygonName: polygonNameOf(found.feature, found.layer)
-        }
+      let found = findSelectedTargets()
+      if (found.length > 0) {
+        log("Using " + found.length + " selected feature(s)")
+        return found
       }
-      log("No selected polygon found")
+      log("No selected polygon or line found")
       mainWindow.displayToast(lastError
           ? qsTr("Random Pointcaster: %1 (using map extent)").arg(lastError)
-          : qsTr("Random Pointcaster: no polygon found, using map extent"))
+          : qsTr("Random Pointcaster: no polygon or line found, using map extent"))
     } catch (e) {
-      log("Could not read selected feature: " + e)
+      log("Could not read selected features: " + e)
       mainWindow.displayToast(qsTr("Random Pointcaster: selection error: %1 (using map extent)").arg(e))
     }
     let settings = mapCanvas.mapSettings
@@ -327,13 +501,16 @@ Item {
     let y1 = get(extent, "yMinimum")
     let y2 = get(extent, "yMaximum")
     log("Using visible map extent")
-    return {
+    return [{
+      kind: "extent",
       geometry: geometryUtils.createGeometryFromWkt(
         "POLYGON((" + x1 + " " + y1 + "," + x2 + " " + y1 + "," + x2 + " " + y2
         + "," + x1 + " " + y2 + "," + x1 + " " + y1 + "))"),
       crs: settings.destinationCrs,
-      isExtent: true
-    }
+      id: null,
+      name: "Map extent",
+      size: null
+    }]
   }
 
   function layerName() {
@@ -399,13 +576,13 @@ Item {
       let geometry = geometryUtils.createGeometryFromWkt(
           "POINT(" + points[i].x + " " + points[i].y + ")")
       let feature = featureUtils.createBlankFeature(layer.fields, geometry)
-      feature.setAttribute(nameIndex, attrs.name + " Sample " + (i + 1))
-      if (attrs.polygonId !== null) {
-        feature.setAttribute(polyIndex, attrs.polygonId)
+      feature.setAttribute(nameIndex, points[i].name)
+      if (points[i].polygonId !== null) {
+        feature.setAttribute(polyIndex, points[i].polygonId)
       }
       feature.setAttribute(createdIndex, attrs.created)
-      if (attrs.rate !== null) {
-        feature.setAttribute(rateIndex, attrs.rate)
+      if (points[i].rate !== null) {
+        feature.setAttribute(rateIndex, points[i].rate)
       }
       if (!layerUtils.addFeature(layer, feature)) {
         log("addFeature failed for point " + i)
@@ -440,12 +617,12 @@ Item {
   // Fallback: attribute types are inferred, so Created is stored as ISO text
   function createGeoJsonLayer(points, crs, attrs) {
     let features = points.map(function(p, i) {
-      let properties = { Name: attrs.name + " Sample " + (i + 1), Created: attrs.created.toISOString() }
-      if (attrs.polygonId !== null) {
-        properties.InPolygon = attrs.polygonId
+      let properties = { Name: p.name, Created: attrs.created.toISOString() }
+      if (p.polygonId !== null) {
+        properties.InPolygon = p.polygonId
       }
-      if (attrs.rate !== null) {
-        properties.Rate = attrs.rate
+      if (p.rate !== null) {
+        properties.Rate = p.rate
       }
       return {
         type: "Feature",
@@ -537,13 +714,8 @@ Item {
       if (layerCrsId && sourceCrsId && layerCrsId !== sourceCrsId) {
         log("Reprojecting points " + sourceCrsId + " -> " + layerCrsId)
         pts = points.map(function(p) {
-          let g = geometryUtils.createGeometryFromWkt("POINT(" + p.x + " " + p.y + ")")
-          let r = geometryUtils.reprojectGeometry(g, target.crs, layerCrs(layer))
-          let wkt = String(get(r, "asWkt")).match(/\(\s*(\S+)\s+(\S+)\s*\)/)
-          if (!wkt) {
-            throw new Error("reprojection failed")
-          }
-          return { x: parseFloat(wkt[1]), y: parseFloat(wkt[2]) }
+          let q = reprojectPoint(p, target.crs, layerCrs(layer))
+          return { x: q.x, y: q.y, name: p.name, polygonId: p.polygonId, rate: p.rate }
         })
       }
       let before = get(layer, "featureCount")
@@ -557,18 +729,8 @@ Item {
 
   function addOutputLayer(points, target) {
     log("Creating output layer")
-    let polygonId = target.polygonId
-    let hasPolygon = polygonId !== undefined && polygonId !== null
-    let area = areaSquareMeters(target.geometry)
-    let rate = area ? points.length / area : null
-    let attrs = {
-      name: hasPolygon ? (target.polygonName ? target.polygonName : "Polygon " + polygonId)
-                       : "Map extent",
-      polygonId: hasPolygon ? polygonId : null,
-      created: new Date(),
-      rate: rate
-    }
-    log("Points=" + points.length + "; area=" + area + " m2; rate=" + rate)
+    let attrs = { created: new Date() }
+    log("Points=" + points.length)
 
     let projectLayer = findProjectSampleLayer()
     if (projectLayer) {
