@@ -8,8 +8,7 @@ run metadata on each point.
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
 https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.0.zip
 
-Look for the single Random Pointcaster toolbar button in the top right corner
-of the screen.
+Look for the Random Pointcaster button.
 
 In order for the Sample Points to be synced back to QGIS begin by adding [the template](template/random_pointcaster_template.gpkg) file to the GIS project prior to packaging for QField or QFieldCloud. The template field attributes expected by the plugin tool are listed below.
 
@@ -18,15 +17,15 @@ In order for the Sample Points to be synced back to QGIS begin by adding [the te
 Install in QField, zoom to study area, and tap the Random Pointcaster plugin toolbar button. The dialog lists the selected features with their size (m² for polygons, m for lines) and asks how many points to create **in each** feature.
 To generate points inside polygons or along lines begin by selecting one or more polygons or lines (open the feature form, or multi-select features in the identify list), then click the toolbar button.
 
-- Polygons: points are sampled randomly inside each polygon. Overlapping polygons are sampled independently, so overlapping areas receive more points. The plugin may show a notice if a generated point reveals an overlap; it does not detect every overlap.
+- Polygons: points are sampled randomly inside each polygon. Overlapping polygons are sampled independently.
 - Lines: points are placed at random distances along each line.
-- Curved geometries are not supported. If any selected feature is curved, the entire run is rejected; convert curved features to straight segments before sampling.
-- Nothing selected: points are sampled inside the visible map extent. No sampling rate is reported. Density mode is not available for the map extent.
+- Curved geometries are not supported. 
+- Nothing selected: points are sampled inside the visible map extent. No sampling rate is reported; density mode is not available.
 - **Number or density:** choose a fixed number of points per feature, or a density (points per 1,000 m² for polygons, per 100 m for lines). For a positive density and known feature size, the requested count is `max(1, round(size / unit × density))`, where `unit` is 1,000 m² or 100 m.
-- **Minimum distance (m):** optional. Points generated in the same run are checked against earlier points from that run in the same CRS, including points from other selected features. Points in different CRSs and points from earlier runs are not compared. The limit is 200 attempts per requested point for each feature; fewer points may be created if sampling fails to find enough suitable locations.
+- **Minimum distance (m):** optional. Points generated in the same run are checked against earlier points from that run in the same CRS, including points from other selected features. 
 
 For map-extent sampling in a geographic CRS, minimum distance is disabled and
-recorded as 0. It remains available for an extent in a projected CRS.
+recorded as 0.
 
 How to select multiple lines or polygons in QField: multi-selection mode is available by long-pressing on a layer name or an attribute form. 
 Polygons and lines should be in a projected CRS with metre units (not degrees).
@@ -65,23 +64,18 @@ or `Line <FID>` is used. Without a selection, the name is `Map extent`.
 
 ## Where the points go, and syncing back to QGIS Desktop
 
-QField does not save layers created at runtime into the project, so the
-plugin writes into a layer that already exists in your project when it can.
+QField persists edits to existing project layers. A plugin-created layer is not automatically added to the saved .qgs/.qgz project definition. Random Pointcaster therefore writes to an existing Sample Points layer when available; otherwise it saves a persistent random_pointcaster.gpkg beside the project and reloads it when the plugin reopens the project.
 
 1. **Project layer (recommended, syncs).** If the project contains a point
    layer named exactly `Sample Points`, the plugin adds the points directly to
-   it. Because it is a normal project layer, QFieldCloud and QFieldSync treat
-   the new points as ordinary edits and bring them back to Desktop.
+   it. 
 2. **Project-folder file (does not automatically sync).** If there is no such
    layer, the plugin creates `random_pointcaster.gpkg` alongside the current
    project file and appends to it on later runs. It adds the file as
    `Sample Points` for the current session and reloads it when the project is
    reopened while the plugin is enabled. An open, saved project and a writable
    project folder are required; the plugin does not fall back to the app
-   directory. Projects in the same folder share this file; use separate
-   folders to keep their points separate. The plugin displays a warning when
-   using this file to remind you that it does not automatically sync back to
-   the original QGIS layer.
+   directory.
 
 The project-folder file uses the CRS of the first sampled target when it is
 created. Later points are reprojected to the existing layer's CRS when needed.
@@ -98,19 +92,14 @@ layer before retrying.
 
 QField's **Compress project and send to...** action archives the project folder,
 including `random_pointcaster.gpkg`. Check the resulting ZIP before removing
-the device copy. The runtime-added layer is not written into the project file,
-so in QGIS Desktop add the GeoPackage manually; QField reloads it automatically
-when the project is reopened with this plugin enabled.
+the device copy. 
 
 ### Set up in QGIS Desktop before packaging or syncing
 
 **Easiest:** copy [`template/random_pointcaster_template.gpkg`](template/random_pointcaster_template.gpkg)
 into your project folder and add its `Sample Points` layer to the project. It is
 EPSG:4326 (so no UTM zone to worry about), already has the fields below, and
-carries a default style that labels each point with just its sample number in
-a small font, visible only at scales of 1:10,000 or larger. Then skip to step 4.
-(Sampling and sizes are still computed in the CRS of your polygons/lines; points
-are reprojected to 4326 on write.)
+carries a default style that labels each point with its sample number.
 
 **Or build it by hand:**
 
@@ -131,14 +120,3 @@ are reprojected to 4326 on write.)
 Troubleshooting: the Message Log lines starting with `[Random Pointcaster]` show
 which route was used (`Appended to project layer; featureCount X -> Y`).
 
-### Existing layers from earlier versions
-
-Before upgrading, back up existing point files. Add the missing fields listed in
-**Output attributes** to the existing `Sample Points` layer, preserving its
-features, and sync or copy the updated file to the device. Existing points have
-no recorded run metadata; the new fields remain empty for those points. For a
-fallback file, back it up and update its schema on Desktop. Version 0.3.1 and
-earlier may have stored a shared fallback file in QField's app directory instead
-of the project folder. Copy that file to the desired project folder as
-`random_pointcaster.gpkg`; it is not moved automatically. Do not overwrite
-another file or replace existing points with an empty template.
