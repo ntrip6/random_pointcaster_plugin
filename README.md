@@ -1,12 +1,15 @@
 ﻿# Random Pointcaster Plugin for QField
 
-This is a QField app-wide plugin written in QML/JavaScript.
+This is a QField app-wide plugin written in QML/JavaScript. Version 0.4.0
+stores points from multiple sampling runs in one `Sample Points` layer, with
+run metadata on each point.
 
 ## Install
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
 https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.0.zip
 
-Look for a tool in the top right corner of screen. 
+Look for the single Random Pointcaster toolbar button in the top right corner
+of the screen.
 
 In order for the Sample Points to be synced back to QGIS begin by adding [the template](template/random_pointcaster_template.gpkg) file to the GIS project prior to packaging for QField or QFieldCloud. The template field attributes expected by the plugin tool are listed below.
 
@@ -15,33 +18,38 @@ In order for the Sample Points to be synced back to QGIS begin by adding [the te
 Install in QField, zoom to study area, and tap the Random Pointcaster plugin toolbar button. The dialog lists the selected features with their size (m² for polygons, m for lines) and asks how many points to create **in each** feature.
 To generate points inside polygons or along lines begin by selecting one or more polygons or lines (open the feature form, or multi-select features in the identify list), then click the toolbar button.
 
-- Polygons: points are sampled randomly inside each polygon. Overlapping polygons are sampled independently, so overlapping areas receive more points; the plugin shows a notice when it detects this.
+- Polygons: points are sampled randomly inside each polygon. Overlapping polygons are sampled independently, so overlapping areas receive more points. The plugin may show a notice if a generated point reveals an overlap; it does not detect every overlap.
 - Lines: points are placed at random distances along each line.
 - Nothing selected: points are sampled inside the visible map extent. No sampling rate is reported. Density mode is not available for the map extent.
-- **Number or density:** choose a fixed number of points per feature, or a density (points per 1,000 m² for polygons, per 100 m for lines). With density, each feature gets `round(size × density)` points, at least 1.
-- **Minimum distance (m):** optional. No two points from one run (across all selected features) will be closer than this. If it can't be met after 200 tries per point, fewer points are created and the notice says so. Points from earlier runs are not considered.
+- **Number or density:** choose a fixed number of points per feature, or a density (points per 1,000 m² for polygons, per 100 m for lines). For a positive density and known feature size, the requested count is `max(1, round(size / unit × density))`, where `unit` is 1,000 m² or 100 m.
+- **Minimum distance (m):** optional. Points generated in the same run are checked against earlier points from that run in the same CRS, including points from other selected features. Points in different CRSs and points from earlier runs are not compared. The limit is 200 attempts per requested point for each feature; fewer points may be created if sampling fails to find enough suitable locations.
 
 How to select multiple lines or polygons in QField: multi-selection mode is available by long-pressing on a layer name or an attribute form. 
-Polygons and lines should be in a projected CRS with meter units (not degrees).
+Polygons and lines should be in a projected CRS with metre units (not degrees).
+Use the same CRS for all selected features if the minimum distance must apply
+between them.
 
 ## Output attributes
 
 | Field | Type | Content |
 |-------|------|---------|
-| `RunID` | Text (36) | Unique identifier shared by all points in a run |
-| `RunName` | Text (255) | Feature name and run start time, or `Multiple features` and the time |
+| `RunID` | Text (36) | UUID shared by all points in a run |
+| `RunName` | Text (255) | `<feature name> - <YYYY-MM-DD HH:mm>`, or `Multiple features - <YYYY-MM-DD HH:mm>` |
 | `RunCreated` | Date/time | Time when the run started |
 | `RunNumber` | Integer (64 bit) | Optional; currently left empty |
 | `Name` | Text (50) | `<feature name> Sample <n> <HH:mm:ss>` |
 | `InFeature` | Integer (64 bit) | Source feature ID (empty for map extent) |
 | `Created` | Date/time | Creation time of the point |
-| `RunSamplingPct` | Decimal | Percent of the source feature sampled, assuming 1 m² (polygons) or 1 m (lines) per point: points ÷ area or length × 100 |
+| `RunSamplingPct` | Decimal | Percent of the source feature sampled, assuming 1 m² (polygons) or 1 m (lines) per point: generated points ÷ area or length × 100; empty for map extent or unknown size |
 | `Requested` | Integer (64 bit) | Total points requested across all features in the run |
 | `Generated` | Integer (64 bit) | Total points generated across all features in the run |
 | `MinDistance` | Decimal | Minimum-distance setting in metres |
 | `Mode` | Text (10) | `count` or `density` |
 
-All run-level values are shared by every point from the same operation.
+All run-level values are shared by every point from the same operation. Use
+`RunID` to group points from a run; `RunName` is a readable label rather than a
+unique identifier. The point `Name` retains its time suffix, but the **layer**
+name is always `Sample Points` without a timestamp.
 `RunSamplingPct` describes each point's source feature and may differ between
 features in the same run.
 
@@ -60,11 +68,15 @@ plugin writes into a layer that already exists in your project when it can.
    the new points as ordinary edits and bring them back to Desktop.
 2. **Project-folder file (does not automatically sync).** If there is no such
    layer, the plugin creates `random_pointcaster.gpkg` alongside the current
-   project file and appends to it on later runs. It adds the file as `Sample
-   Points` for the current session and reloads it when the project is reopened,
-   while the plugin is enabled. The project folder must be writable. Projects
-   in the same folder share this file; use separate folders to keep their
-   points separate.
+   project file and appends to it on later runs. It adds the file as
+   `Sample Points` for the current session and reloads it when the project is
+   reopened while the plugin is enabled. An open, saved project and a writable
+   project folder are required; the plugin does not fall back to the app
+   directory. Projects in the same folder share this file; use separate
+   folders to keep their points separate.
+
+The project-folder file uses the CRS of the first sampled target when it is
+created. Later points are reprojected to the existing layer's CRS when needed.
 
 If an existing `Sample Points` layer is missing required fields or cannot be
 written, the plugin reports an error instead of silently creating another
@@ -117,9 +129,8 @@ Before upgrading, back up existing point files. Add the missing fields listed in
 **Output attributes** to the existing `Sample Points` layer, preserving its
 features, and sync or copy the updated file to the device. Existing points have
 no recorded run metadata; the new fields remain empty for those points. For a
-fallback file, copy it from QField's app directory, update its schema on Desktop, and
-copy it to the desired project folder as `random_pointcaster.gpkg`. Version
-0.3.1 and earlier may have stored a shared fallback file in QField's app
-directory instead. It is not moved automatically: back it up and choose which
-project folder should receive it. Do not overwrite another file or replace
-existing points with an empty template.
+fallback file, back it up and update its schema on Desktop. Version 0.3.1 and
+earlier may have stored a shared fallback file in QField's app directory instead
+of the project folder. Copy that file to the desired project folder as
+`random_pointcaster.gpkg`; it is not moved automatically. Do not overwrite
+another file or replace existing points with an empty template.
