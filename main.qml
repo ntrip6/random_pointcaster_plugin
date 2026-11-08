@@ -288,9 +288,10 @@ Item {
     }
 
     let outCrs = targets[0].crs
+    let runStarted = new Date()
     let attrs = createRunMetadata(targets.length === 1 ? targets[0].name : qsTr("Multiple features"),
-                                  0, options.minDistance, options.mode)
-    runTime = timeLabel(new Date(attrs.runCreated))
+                                  runStarted, options.minDistance, options.mode)
+    runTime = timeLabel(runStarted)
     let outCrsId = get(outCrs, "authid")
     let points = []
     let overlapping = false
@@ -336,7 +337,6 @@ Item {
       return
     }
 
-    attrs.requested = requested
     attrs.generated = points.length
     if (!addOutputLayer(points, { crs: outCrs }, attrs)) {
       log("Failed: output layer creation did not complete")
@@ -774,15 +774,13 @@ Item {
     return pad2(date.getHours()) + ":" + pad2(date.getMinutes()) + ":" + pad2(date.getSeconds())
   }
 
-  function createRunMetadata(targetName, requested, minDistance, mode) {
-    let iso = new Date().toISOString()
+  function createRunMetadata(targetName, runStarted, minDistance, mode) {
+    let iso = runStarted.toISOString()
     let compact = iso.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
     let suffix = (Math.random().toString(36).substring(2, 6) + "0000").slice(0, 4)
     return {
       runId: compact + "-" + suffix,
-      runCreated: iso,
       runName: labelWithSuffix(targetName, " - " + iso.substring(0, 16).replace("T", " "), 50),
-      requested: requested,
       generated: 0,
       minDistance: minDistance,
       mode: mode
@@ -913,8 +911,8 @@ Item {
   }
 
   function fillLayer(layer, points, attrs, destination) {
-    let names = ["RunID", "RunName", "RunCreated", "Name", "InFeature",
-                 "Created", "RunSamplingPct", "Requested", "Generated", "MinDistance", "Mode"]
+    let names = ["RunID", "RunName", "Name", "InFeature", "Created",
+                 "RunSamplingPct", "Generated", "MinDistance", "Mode"]
     let indexes = {}
     let missing = []
     for (let i = 0; i < names.length; i++) {
@@ -937,7 +935,6 @@ Item {
       let feature = featureUtils.createBlankFeature(layer.fields, geometry)
       feature.setAttribute(indexes.RunID, attrs.runId)
       feature.setAttribute(indexes.RunName, attrs.runName)
-      feature.setAttribute(indexes.RunCreated, new Date(attrs.runCreated))
       feature.setAttribute(indexes.Name, points[i].name)
       if (points[i].featureId !== null) {
         feature.setAttribute(indexes.InFeature, points[i].featureId)
@@ -946,7 +943,6 @@ Item {
       if (points[i].rate !== null) {
         feature.setAttribute(indexes.RunSamplingPct, points[i].rate)
       }
-      feature.setAttribute(indexes.Requested, attrs.requested)
       feature.setAttribute(indexes.Generated, attrs.generated)
       feature.setAttribute(indexes.MinDistance, attrs.minDistance)
       feature.setAttribute(indexes.Mode, attrs.mode)
@@ -960,10 +956,10 @@ Item {
       throw new Error("Feature helper is unavailable in this QField version.")
     }
     let uri = "Point?crs=" + get(crs, "authid")
-        + "&field=RunID:string(36)&field=RunName:string(50)&field=RunCreated:datetime"
+        + "&field=RunID:string(36)&field=RunName:string(50)"
         + "&field=Name:string(100)&field=InFeature:int8"
         + "&field=Created:datetime&field=RunSamplingPct:double"
-        + "&field=Requested:int8&field=Generated:int8"
+        + "&field=Generated:int8"
         + "&field=MinDistance:double&field=Mode:string(10)"
     let layer = layerUtils.loadVectorLayer(uri, layerName(), "memory")
     if (!layer || !get(layer, "isValid")) {
@@ -975,6 +971,42 @@ Item {
   }
 
   readonly property string gpkgFileName: "random_pointcaster.gpkg"
+
+  function fallbackStyleXml() {
+    let colors = "array('230,57,70','29,111,200','21,139,92','230,153,15',"
+        + "'157,67,182','0,150,165','190,90,35','210,75,150',"
+        + "'100,115,40','95,85,195','120,100,75','70,145,185')"
+    let expression = "coalesce(array_get(" + colors
+        + ", array_find(array_sort(array_distinct(array_agg(&quot;RunID&quot;))), "
+        + "&quot;RunID&quot;) % 12), '120,120,120')"
+    return '<qgis version="3.44.0" styleCategories="Symbology">'
+        + '<renderer-v2 type="singleSymbol"><symbols>'
+        + '<symbol name="0" type="marker" alpha="1"><layer class="SimpleMarker" enabled="1">'
+        + '<Option type="Map"><Option name="name" type="QString" value="circle"/>'
+        + '<Option name="size" type="QString" value="2"/>'
+        + '<Option name="outline_color" type="QString" value="35,35,35,255"/>'
+        + '<Option name="outline_style" type="QString" value="solid"/>'
+        + '<Option name="outline_width" type="QString" value="0"/></Option>'
+        + '<data_defined_properties><Option type="Map">'
+        + '<Option name="properties" type="Map"><Option name="fillColor" type="Map">'
+        + '<Option name="active" type="bool" value="true"/>'
+        + '<Option name="expression" type="QString" value="' + expression + '"/>'
+        + '<Option name="type" type="int" value="3"/></Option></Option>'
+        + '<Option name="type" type="QString" value="collection"/>'
+        + '</Option></data_defined_properties></layer></symbol>'
+        + '</symbols></renderer-v2></qgis>'
+  }
+
+  function ensureFallbackStyle(path) {
+    let stylePath = path.replace(/\.gpkg$/i, ".qml")
+    if (stylePath === path || !fileUtils || typeof fileUtils.writeFileContent !== "function") {
+      throw new Error("Cannot create the fallback point style for " + path)
+    }
+    if (!fileUtils.fileExists(stylePath)
+        && !fileUtils.writeFileContent(stylePath, fallbackStyleXml())) {
+      throw new Error("Could not save the fallback point style: " + stylePath)
+    }
+  }
 
   function projectGeoPackagePath() {
     if (!projectFilePath) {
@@ -992,11 +1024,17 @@ Item {
   }
 
   function loadSavedLayer(path) {
+    ensureFallbackStyle(path)
     let layer = layerUtils.loadVectorLayer(path, layerName(), "ogr")
     if (!layer || !get(layer, "isValid") || get(layer, "geometryType") !== 0) {
       throw new Error("Cannot open the existing point GeoPackage: " + path
           + ". It was not overwritten.")
     }
+    if (typeof layer.setCustomProperty !== "function"
+        || typeof layer.customProperty !== "function") {
+      throw new Error("This QField version cannot safely identify the project-folder point layer.")
+    }
+    layer.setCustomProperty("random_pointcaster/fallbackPath", path)
     return layer
   }
 
@@ -1031,9 +1069,20 @@ Item {
     return false
   }
 
+  function normalizedLayerPath(path) {
+    let normalized = String(path).replace(/\\/g, "/")
+    return /^[a-zA-Z]:\//.test(normalized) ? normalized.toLowerCase() : normalized
+  }
+
   function layerUsesPath(layer, path) {
-    let source = String(get(layer, "source")).split("|")[0]
-    return source.replace(/\\/g, "/") === path
+    if (typeof layer.customProperty === "function"
+        && normalizedLayerPath(layer.customProperty("random_pointcaster/fallbackPath", ""))
+           === normalizedLayerPath(path)) {
+      return true
+    }
+    let source = get(layer, "source")
+    return source !== undefined && source !== null
+        && normalizedLayerPath(String(source).split("|")[0]) === normalizedLayerPath(path)
   }
 
   // Finds a point layer named "Sample Points" that is already part of the project
@@ -1104,6 +1153,7 @@ Item {
     }
 
     let layer
+    ensureFallbackStyle(path)
     if (savedExists) {
       layer = loadSavedLayer(path)
       appendToProjectLayer(layer, points, target, attrs)

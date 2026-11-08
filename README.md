@@ -1,12 +1,12 @@
 ﻿# Random Pointcaster Plugin for QField
 
-This is a QField app-wide plugin written in QML/JavaScript. Version 0.4.3
+This is a QField app-wide plugin written in QML/JavaScript. Version 0.4.4
 stores points from multiple sampling runs in one `Sample Points` layer, with
 run metadata on each point.
 
 ## Install
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
-https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.3.zip
+https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.4.zip
 
 Look for the Random Pointcaster button.
 
@@ -37,13 +37,11 @@ between them.
 | Field | Type | Content |
 |-------|------|---------|
 | `RunID` | Text (36) | UTC start timestamp and random suffix, shared by all points in a run (e.g. `20261108T143200Z-ab12`) |
-| `RunCreated` | Date/time | Time when the run started |
 | `RunName` | Text (50) | `<feature name> - <YYYY-MM-DD HH:mm>` in UTC, or `Multiple features - <YYYY-MM-DD HH:mm>` |
 | `Name` | Text (100) | `<feature name> Sample <n> <HH:mm:ss>` |
 | `InFeature` | Integer (64 bit) | Source feature ID (empty for map extent) |
 | `Created` | Date/time | Creation time of the point |
 | `RunSamplingPct` | Decimal | Percent of the source feature sampled, assuming 1 m² (polygons) or 1 m (lines) per point: generated points ÷ area or length × 100; empty for map extent or unknown size |
-| `Requested` | Integer (64 bit) | Total points requested across all features in the run |
 | `Generated` | Integer (64 bit) | Total points generated across all features in the run |
 | `MinDistance` | Decimal | Minimum-distance setting in metres |
 | `Mode` | Text (10) | `count` or `density` |
@@ -56,7 +54,9 @@ name is always `Sample Points` without a timestamp.
 features in the same run.
 Long feature names are shortened as needed to fit the `Name` and `RunName`
 fields while preserving the sample number and time suffixes.
-Existing `RunNumber` fields are ignored and may be retained when upgrading.
+Existing `RunNumber`, `RunCreated`, and `Requested` fields are ignored and
+may be retained when upgrading. Existing values are not removed; new points
+leave these legacy fields unset. Existing GeoPackages are not altered.
 
 The feature name is read from the first non-empty field called `Name`, `Label`
 or `Title` (case-insensitive, in that order). If none exists, `Polygon <FID>`
@@ -79,6 +79,16 @@ QField persists edits to existing project layers. A plugin-created layer is not 
 
 The project-folder file uses the CRS of the first sampled target when it is
 created. Later points are reprojected to the existing layer's CRS when needed.
+
+Points are colored by `RunID` using a 12-color palette, which repeats after
+12 runs. Colors are assigned by sorted run ID and may change if an earlier run
+is added or deleted. The fallback uses a `random_pointcaster.qml` style file
+beside the GeoPackage; an existing style file is not overwritten. The supplied
+template includes the same styling. To update an existing prepared project
+layer, add the template in QGIS, copy its symbology, and paste it onto the
+prepared layer before synchronizing the project.
+After upgrading from an earlier plugin version, reopen the project so the
+plugin can recognize an already-loaded fallback layer.
 
 If an existing `Sample Points` layer is missing required fields or cannot be
 written, the plugin reports an error instead of silently creating another
