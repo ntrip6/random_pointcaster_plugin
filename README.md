@@ -37,7 +37,7 @@ between them.
 | Field | Type | Content |
 |-------|------|---------|
 | `RunID` | Text (36) | UTC start timestamp and random suffix, shared by all points in a run (e.g. `20261108T143200Z-ab12`) |
-| `RunName` | Text (50) | `<feature name> - <YYYY-MM-DD HH:mm>` in UTC, or `Multiple features - <YYYY-MM-DD HH:mm>` |
+| `RunName` | Text (50) | `<feature name> - <YYYY-MM-DD HH:mm>` in the device's local time zone, or `Multiple features - <YYYY-MM-DD HH:mm>` |
 | `Name` | Text (100) | `<feature name> Sample <n> <HH:mm:ss>` |
 | `InFeature` | Integer (64 bit) | Source feature ID (empty for map extent) |
 | `Created` | Date/time | Creation time of the point |
@@ -54,6 +54,7 @@ name is always `Sample Points` without a timestamp.
 features in the same run.
 Long feature names are shortened as needed to fit the `Name` and `RunName`
 fields while preserving the sample number and time suffixes.
+Existing `RunName` values are not changed.
 Existing `RunNumber`, `RunCreated`, and `Requested` fields are ignored and
 may be retained when upgrading. Existing values are not removed; new points
 leave these legacy fields unset. Existing GeoPackages are not altered.

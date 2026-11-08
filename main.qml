@@ -804,9 +804,12 @@ Item {
     let iso = runStarted.toISOString()
     let compact = iso.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
     let suffix = (Math.random().toString(36).substring(2, 6) + "0000").slice(0, 4)
+    let localDateTime = runStarted.getFullYear() + "-" + pad2(runStarted.getMonth() + 1)
+        + "-" + pad2(runStarted.getDate()) + " " + pad2(runStarted.getHours())
+        + ":" + pad2(runStarted.getMinutes())
     return {
       runId: compact + "-" + suffix,
-      runName: labelWithSuffix(targetName, " - " + iso.substring(0, 16).replace("T", " "), 50),
+      runName: labelWithSuffix(targetName, " - " + localDateTime, 50),
       generated: 0,
       minDistance: minDistance,
       mode: mode
