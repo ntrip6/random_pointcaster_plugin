@@ -102,10 +102,19 @@ Item {
     width: Math.min(parent.width * 0.9, 360)
     z: 10000
 
-    contentItem: Label {
+    contentItem: ScrollView {
       width: generationErrorDialog.availableWidth
-      wrapMode: Text.WordWrap
-      text: plugin.generationError
+      implicitHeight: Math.min(errorText.implicitHeight, mainWindow.height * 0.55)
+      clip: true
+
+      TextArea {
+        id: errorText
+        width: generationErrorDialog.availableWidth
+        readOnly: true
+        selectByMouse: true
+        wrapMode: TextEdit.Wrap
+        text: plugin.generationError
+      }
     }
   }
 
@@ -824,6 +833,53 @@ Item {
     return total
   }
 
+  function writeLogModel() {
+    let panel = iface.findItemByObjectName("messageLog")
+    return panel ? panel.model : null
+  }
+
+  function addFeatureWithDiagnostics(layer, feature, pointNumber, pointCount) {
+    let model = null
+    let before = 0
+    try {
+      model = writeLogModel()
+      if (model) {
+        before = model.rowCount()
+      }
+    } catch (e) {
+      log("Could not read QField message log: " + e)
+      model = null
+    }
+
+    if (layerUtils.addFeature(layer, feature)) {
+      return
+    }
+    let details = []
+    if (model) {
+      try {
+        let added = Math.max(0, model.rowCount() - before)
+        for (let i = 0; i < Math.min(added, 8); i++) {
+          let index = model.index(i, 0)
+          let message = model.data(index, 256)
+          let tag = model.data(index, 257)
+          if (message && (!tag || String(tag) === "QField")) {
+            details.push(String(message))
+          }
+        }
+      } catch (e) {
+        log("Could not retrieve QField write error: " + e)
+      }
+    }
+    let message = qsTr("Could not add point %1 of %2. Earlier points from this run may already have been added.")
+        .arg(pointNumber).arg(pointCount)
+    if (details.length) {
+      message += "\n\n" + details.join("\n")
+    } else {
+      message += "\n\n" + qsTr("QField did not provide additional write-error details.")
+    }
+    throw new Error(message)
+  }
+
   function fillLayer(layer, points, attrs) {
     let names = ["RunID", "RunName", "RunCreated", "Name", "InFeature",
                  "Created", "RunSamplingPct", "Requested", "Generated", "MinDistance", "Mode"]
@@ -861,10 +917,7 @@ Item {
       feature.setAttribute(indexes.Generated, attrs.generated)
       feature.setAttribute(indexes.MinDistance, attrs.minDistance)
       feature.setAttribute(indexes.Mode, attrs.mode)
-      if (!layerUtils.addFeature(layer, feature)) {
-        throw new Error("Could not add point " + (i + 1) + " of " + points.length
-            + "; earlier points from this run may already have been added.")
-      }
+      addFeatureWithDiagnostics(layer, feature, i + 1, points.length)
     }
     return true
   }
