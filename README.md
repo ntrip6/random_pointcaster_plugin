@@ -20,9 +20,13 @@ To generate points inside polygons or along lines begin by selecting one or more
 
 - Polygons: points are sampled randomly inside each polygon. Overlapping polygons are sampled independently, so overlapping areas receive more points. The plugin may show a notice if a generated point reveals an overlap; it does not detect every overlap.
 - Lines: points are placed at random distances along each line.
+- Curved geometries are not supported. If any selected feature is curved, the entire run is rejected; convert curved features to straight segments before sampling.
 - Nothing selected: points are sampled inside the visible map extent. No sampling rate is reported. Density mode is not available for the map extent.
 - **Number or density:** choose a fixed number of points per feature, or a density (points per 1,000 m² for polygons, per 100 m for lines). For a positive density and known feature size, the requested count is `max(1, round(size / unit × density))`, where `unit` is 1,000 m² or 100 m.
 - **Minimum distance (m):** optional. Points generated in the same run are checked against earlier points from that run in the same CRS, including points from other selected features. Points in different CRSs and points from earlier runs are not compared. The limit is 200 attempts per requested point for each feature; fewer points may be created if sampling fails to find enough suitable locations.
+
+For map-extent sampling in a geographic CRS, minimum distance is disabled and
+recorded as 0. It remains available for an extent in a projected CRS.
 
 How to select multiple lines or polygons in QField: multi-selection mode is available by long-pressing on a layer name or an attribute form. 
 Polygons and lines should be in a projected CRS with metre units (not degrees).
@@ -33,11 +37,10 @@ between them.
 
 | Field | Type | Content |
 |-------|------|---------|
-| `RunID` | Text (36) | UUID shared by all points in a run |
-| `RunName` | Text (255) | `<feature name> - <YYYY-MM-DD HH:mm>`, or `Multiple features - <YYYY-MM-DD HH:mm>` |
+| `RunID` | Text (36) | UTC start timestamp and random suffix, shared by all points in a run (e.g. `20261108T143200Z-ab12`) |
 | `RunCreated` | Date/time | Time when the run started |
-| `RunNumber` | Integer (64 bit) | Optional; currently left empty |
-| `Name` | Text (50) | `<feature name> Sample <n> <HH:mm:ss>` |
+| `RunName` | Text (50) | `<feature name> - <YYYY-MM-DD HH:mm>` in UTC, or `Multiple features - <YYYY-MM-DD HH:mm>` |
+| `Name` | Text (100) | `<feature name> Sample <n> <HH:mm:ss>` |
 | `InFeature` | Integer (64 bit) | Source feature ID (empty for map extent) |
 | `Created` | Date/time | Creation time of the point |
 | `RunSamplingPct` | Decimal | Percent of the source feature sampled, assuming 1 m² (polygons) or 1 m (lines) per point: generated points ÷ area or length × 100; empty for map extent or unknown size |
@@ -52,6 +55,9 @@ unique identifier. The point `Name` retains its time suffix, but the **layer**
 name is always `Sample Points` without a timestamp.
 `RunSamplingPct` describes each point's source feature and may differ between
 features in the same run.
+Long feature names are shortened as needed to fit the `Name` and `RunName`
+fields while preserving the sample number and time suffixes.
+Existing `RunNumber` fields are ignored and may be retained when upgrading.
 
 The feature name is read from the first non-empty field called `Name`, `Label`
 or `Title` (case-insensitive, in that order). If none exists, `Polygon <FID>`
@@ -73,7 +79,9 @@ plugin writes into a layer that already exists in your project when it can.
    reopened while the plugin is enabled. An open, saved project and a writable
    project folder are required; the plugin does not fall back to the app
    directory. Projects in the same folder share this file; use separate
-   folders to keep their points separate.
+   folders to keep their points separate. The plugin displays a warning when
+   using this file to remind you that it does not automatically sync back to
+   the original QGIS layer.
 
 The project-folder file uses the CRS of the first sampled target when it is
 created. Later points are reprojected to the existing layer's CRS when needed.

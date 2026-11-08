@@ -12,6 +12,7 @@ Item {
   property var mapCanvas: iface.mapCanvas()
   property int requestedPointCount: 1
   property var pendingTargets: []
+  property bool extentDistanceUnavailable: false
   property string selectionSummary: ""
   property string runTime: ""
   property string projectFilePath: ""
@@ -76,14 +77,34 @@ Item {
       // Capture the selection now; opening the dialog may clear it
       try {
         plugin.pendingTargets = plugin.collectTargets()
+        plugin.extentDistanceUnavailable = plugin.isGeographicExtent(plugin.pendingTargets)
         plugin.selectionSummary = plugin.describeTargets(plugin.pendingTargets)
       } catch (e) {
         plugin.pendingTargets = []
         plugin.selectionSummary = ""
         log("ERROR capturing targets: " + e)
+        mainWindow.displayToast(qsTr("Random Pointcaster: %1").arg(e))
+        return
       }
       countDialog.open()
       log("Dialog open() called; visible=" + countDialog.visible)
+    }
+  }
+
+  Dialog {
+    id: fallbackWarningDialog
+    title: qsTr("Points saved locally")
+    modal: true
+    standardButtons: Dialog.Ok
+    parent: mainWindow.contentItem
+    anchors.centerIn: parent
+    width: Math.min(parent.width * 0.9, 360)
+    z: 10000
+
+    contentItem: Label {
+      width: fallbackWarningDialog.availableWidth
+      wrapMode: Text.WordWrap
+      text: qsTr("Points are being saved to random_pointcaster.gpkg in this project folder. They will be included in an exported project ZIP, but will not be synchronized automatically to the original QGIS layer.")
     }
   }
 
@@ -141,10 +162,18 @@ Item {
 
       SpinBox {
         id: minDistance
+        enabled: !plugin.extentDistanceUnavailable
         from: 0
         to: 10000
         value: 0
         editable: true
+      }
+
+      Label {
+        visible: plugin.extentDistanceUnavailable
+        width: parent.width
+        wrapMode: Text.WordWrap
+        text: qsTr("Minimum distance is unavailable for map extent sampling in a geographic CRS.")
       }
     }
 
@@ -154,7 +183,7 @@ Item {
         mode: modeBox.currentIndex === 1 ? "density" : "count",
         count: pointCount.value,
         density: isNaN(density) ? 0 : density,
-        minDistance: minDistance.value
+        minDistance: minDistance.enabled ? minDistance.value : 0
       }
       plugin.requestedPointCount = pointCount.value
       log("Generation requested: " + JSON.stringify(options))
@@ -225,10 +254,15 @@ Item {
       mainWindow.displayToast(qsTr("No valid polygon, line or map extent is available."))
       return
     }
+    validateTargets(targets)
+    if (isGeographicExtent(targets)) {
+      options.minDistance = 0
+    }
 
     let outCrs = targets[0].crs
-    let runStarted = new Date()
-    runTime = timeLabel(runStarted)
+    let attrs = createRunMetadata(targets.length === 1 ? targets[0].name : qsTr("Multiple features"),
+                                  0, options.minDistance, options.mode)
+    runTime = timeLabel(new Date(attrs.runCreated))
     let outCrsId = get(outCrs, "authid")
     let points = []
     let overlapping = false
@@ -258,7 +292,7 @@ Item {
         }
         points.push({
           x: p.x, y: p.y,
-          name: target.name + " Sample " + (i + 1) + " " + runTime,
+          name: labelWithSuffix(target.name, " Sample " + (i + 1) + " " + runTime, 100),
           featureId: target.id,
           rate: rate,
           created: new Date()
@@ -274,17 +308,8 @@ Item {
       return
     }
 
-    let attrs = {
-      runId: newRunId(),
-      runName: (targets.length === 1 ? targets[0].name : qsTr("Multiple features"))
-          + " - " + dateTimeLabel(runStarted),
-      runCreated: runStarted,
-      runNumber: null,
-      requested: requested,
-      generated: points.length,
-      minDistance: options.minDistance,
-      mode: options.mode
-    }
+    attrs.requested = requested
+    attrs.generated = points.length
     if (!addOutputLayer(points, { crs: outCrs }, attrs)) {
       log("Failed: output layer creation did not complete")
       return
@@ -533,10 +558,37 @@ Item {
     return null
   }
 
+  function isGeographicExtent(targets) {
+    if (!targets || targets.length !== 1 || targets[0].kind !== "extent") {
+      return false
+    }
+    let crs = targets[0].crs
+    let geographic = crs ? get(crs, "isGeographic") : undefined
+    if (typeof geographic !== "boolean") {
+      throw new Error(qsTr("Cannot determine whether the map CRS is geographic."))
+    }
+    return geographic
+  }
+
+  function validateTargets(targets) {
+    for (let i = 0; i < targets.length; i++) {
+      if (targets[i].kind === "curved") {
+        throw new Error(qsTr("Curved geometries are not supported. Convert the selected features to straight segments before sampling."))
+      }
+    }
+  }
+
   // Builds a sampling target from a layer/feature/geometry, or null if unsupported
   function makeTarget(layer, feature, geometry) {
     if (!layer || !feature || !geometry || get(geometry, "isEmpty")) {
       return null
+    }
+    let wkt = get(geometry, "asWkt")
+    if (typeof wkt !== "string") {
+      throw new Error(qsTr("Could not inspect the selected feature's geometry."))
+    }
+    if (/\b(CircularString|CompoundCurve|CurvePolygon|MultiCurve|MultiSurface)\b/i.test(wkt)) {
+      return { kind: "curved" }
     }
     let kind = kindOf(layer, geometry)
     if (!kind) {
@@ -589,26 +641,23 @@ Item {
     log("selection=" + (selection ? "found" : "null")
         + "; model=" + (model ? "found" : "null"))
 
-    let fromModel = attempt("model source", function() {
-      if (!model) {
-        return []
-      }
+    let fromModel = []
+    if (model) {
       log("model.count=" + model.count + "; model.selectedCount=" + model.selectedCount)
-      return targetsFromModel(model)
-    }) || []
+      fromModel = targetsFromModel(model)
+    }
+    validateTargets(fromModel)
     // Several features are only visible through the model; a single one may also be focused
     if (fromModel.length > 1) {
       return fromModel
     }
 
-    let focused = attempt("focused source", function() {
-      if (!selection || !selection.focusedLayer || !selection.focusedFeature) {
-        return null
-      }
+    let focused = null
+    if (selection && selection.focusedLayer && selection.focusedFeature) {
       log("Source (focused): layer=" + selection.focusedLayer.name)
-      return makeTarget(selection.focusedLayer, selection.focusedFeature,
-                        selection.focusedGeometry)
-    })
+      focused = makeTarget(selection.focusedLayer, selection.focusedFeature,
+                           selection.focusedGeometry)
+    }
     if (focused) {
       return [focused]
     }
@@ -652,20 +701,16 @@ Item {
 
   function collectTargets() {
     lastError = ""
-    try {
-      let found = findSelectedTargets()
-      if (found.length > 0) {
-        log("Using " + found.length + " selected feature(s)")
-        return found
-      }
-      log("No selected polygon or line found")
-      mainWindow.displayToast(lastError
-          ? qsTr("Random Pointcaster: %1 (using map extent)").arg(lastError)
-          : qsTr("Random Pointcaster: no polygon or line found, using map extent"))
-    } catch (e) {
-      log("Could not read selected features: " + e)
-      mainWindow.displayToast(qsTr("Random Pointcaster: selection error: %1 (using map extent)").arg(e))
+    let found = findSelectedTargets()
+    if (found.length > 0) {
+      validateTargets(found)
+      log("Using " + found.length + " selected feature(s)")
+      return found
     }
+    log("No selected polygon or line found")
+    mainWindow.displayToast(lastError
+        ? qsTr("Random Pointcaster: %1 (using map extent)").arg(lastError)
+        : qsTr("Random Pointcaster: no polygon or line found, using map extent"))
     let settings = mapCanvas.mapSettings
     let extent = settings.visibleExtent
     let x1 = get(extent, "xMinimum")
@@ -689,6 +734,10 @@ Item {
     return "Sample Points"
   }
 
+  function labelWithSuffix(prefix, suffix, maxLength) {
+    return String(prefix).slice(0, Math.max(0, maxLength - suffix.length)) + suffix
+  }
+
   function pad2(n) {
     return (n < 10 ? "0" : "") + n
   }
@@ -697,16 +746,19 @@ Item {
     return pad2(date.getHours()) + ":" + pad2(date.getMinutes()) + ":" + pad2(date.getSeconds())
   }
 
-  function dateTimeLabel(date) {
-    return date.getFullYear() + "-" + pad2(date.getMonth() + 1) + "-" + pad2(date.getDate())
-        + " " + pad2(date.getHours()) + ":" + pad2(date.getMinutes())
-  }
-
-  function newRunId() {
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c) {
-      let r = Math.floor(Math.random() * 16)
-      return (c === "x" ? r : (r & 3 | 8)).toString(16)
-    })
+  function createRunMetadata(targetName, requested, minDistance, mode) {
+    let iso = new Date().toISOString()
+    let compact = iso.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
+    let suffix = (Math.random().toString(36).substring(2, 6) + "0000").slice(0, 4)
+    return {
+      runId: compact + "-" + suffix,
+      runCreated: iso,
+      runName: labelWithSuffix(targetName, " - " + iso.substring(0, 16).replace("T", " "), 50),
+      requested: requested,
+      generated: 0,
+      minDistance: minDistance,
+      mode: mode
+    }
   }
 
   // Polygon area in m2; assumes a projected CRS with metre units
@@ -754,7 +806,7 @@ Item {
   }
 
   function fillLayer(layer, points, attrs) {
-    let names = ["RunID", "RunName", "RunCreated", "RunNumber", "Name", "InFeature",
+    let names = ["RunID", "RunName", "RunCreated", "Name", "InFeature",
                  "Created", "RunSamplingPct", "Requested", "Generated", "MinDistance", "Mode"]
     let indexes = {}
     let missing = []
@@ -777,10 +829,7 @@ Item {
       let feature = featureUtils.createBlankFeature(layer.fields, geometry)
       feature.setAttribute(indexes.RunID, attrs.runId)
       feature.setAttribute(indexes.RunName, attrs.runName)
-      feature.setAttribute(indexes.RunCreated, attrs.runCreated)
-      if (attrs.runNumber !== null) {
-        feature.setAttribute(indexes.RunNumber, attrs.runNumber)
-      }
+      feature.setAttribute(indexes.RunCreated, new Date(attrs.runCreated))
       feature.setAttribute(indexes.Name, points[i].name)
       if (points[i].featureId !== null) {
         feature.setAttribute(indexes.InFeature, points[i].featureId)
@@ -808,8 +857,8 @@ Item {
         return null
       }
       let uri = "Point?crs=" + get(crs, "authid")
-          + "&field=RunID:string(36)&field=RunName:string(255)&field=RunCreated:datetime"
-          + "&field=RunNumber:int8&field=Name:string(50)&field=InFeature:int8"
+          + "&field=RunID:string(36)&field=RunName:string(50)&field=RunCreated:datetime"
+          + "&field=Name:string(100)&field=InFeature:int8"
           + "&field=Created:datetime&field=RunSamplingPct:double"
           + "&field=Requested:int8&field=Generated:int8"
           + "&field=MinDistance:double&field=Mode:string(10)"
@@ -931,6 +980,9 @@ Item {
         throw new Error("A different Sample Points layer is already in this project. "
                         + "Resolve the conflict with " + path + " before generating points.")
       }
+      if (layerUsesPath(projectLayer, path)) {
+        fallbackWarningDialog.open()
+      }
       if (appendToProjectLayer(projectLayer, points, target, attrs)) {
         attempt("repaint", function() { projectLayer.triggerRepaint() })
         mainWindow.displayToast(qsTr("Added %1 points to the project's Sample Points layer").arg(points.length))
@@ -940,6 +992,7 @@ Item {
     }
 
     let layer
+    fallbackWarningDialog.open()
     if (savedExists) {
       layer = loadSavedLayer(path)
       appendToProjectLayer(layer, points, target, attrs)
