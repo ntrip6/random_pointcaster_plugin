@@ -120,7 +120,7 @@ Item {
 
   Dialog {
     id: fallbackWarningDialog
-    title: qsTr("Points saved locally")
+    title: qsTr("Local fallback storage")
     modal: true
     standardButtons: Dialog.Ok
     parent: mainWindow.contentItem
@@ -131,7 +131,7 @@ Item {
     contentItem: Label {
       width: fallbackWarningDialog.availableWidth
       wrapMode: Text.WordWrap
-      text: qsTr("Points are being saved to random_pointcaster.gpkg in this project folder. They will be included in an exported project ZIP, but will not be synchronized automatically to the original QGIS layer.")
+      text: qsTr("Fallback points use random_pointcaster.gpkg in this project folder. Saved points will be included in an exported project ZIP, but will not be synchronized automatically to the original QGIS layer.")
     }
   }
 
@@ -834,20 +834,26 @@ Item {
   }
 
   function writeLogModel() {
+    if (typeof messageLogModel !== "undefined" && messageLogModel) {
+      return messageLogModel
+    }
     let panel = iface.findItemByObjectName("messageLog")
     return panel ? panel.model : null
   }
 
-  function addFeatureWithDiagnostics(layer, feature, pointNumber, pointCount) {
+  function addFeatureWithDiagnostics(layer, feature, pointNumber, pointCount, destination) {
     let model = null
     let before = 0
+    let logStatus = ""
     try {
       model = writeLogModel()
       if (model) {
         before = model.rowCount()
+      } else {
+        logStatus = qsTr("QField message log model was not available.")
       }
     } catch (e) {
-      log("Could not read QField message log: " + e)
+      logStatus = qsTr("Could not read QField message log before writing: %1").arg(e)
       model = null
     }
 
@@ -862,25 +868,51 @@ Item {
           let index = model.index(i, 0)
           let message = model.data(index, 256)
           let tag = model.data(index, 257)
-          if (message && (!tag || String(tag) === "QField")) {
-            details.push(String(message))
+          if (message) {
+            details.push((tag ? String(tag) + ": " : "") + String(message))
           }
         }
+        if (!details.length) {
+          logStatus = qsTr("No new QField log messages were available (before: %1, after: %2).")
+              .arg(before).arg(model.rowCount())
+        }
       } catch (e) {
-        log("Could not retrieve QField write error: " + e)
+        logStatus = qsTr("Could not retrieve QField log messages: %1").arg(e)
       }
     }
     let message = qsTr("Could not add point %1 of %2. Earlier points from this run may already have been added.")
         .arg(pointNumber).arg(pointCount)
+    message += "\n\n" + qsTr("Destination: %1").arg(destination)
     if (details.length) {
-      message += "\n\n" + details.join("\n")
-    } else {
-      message += "\n\n" + qsTr("QField did not provide additional write-error details.")
+      message += "\n\n" + qsTr("New QField log messages:") + "\n" + details.join("\n")
+    }
+    if (logStatus) {
+      message += "\n\n" + logStatus
     }
     throw new Error(message)
   }
 
-  function fillLayer(layer, points, attrs) {
+  function writePoint(layer, feature, pointNumber, pointCount, destination) {
+    let startedEditing = layer.startEditing()
+    try {
+      addFeatureWithDiagnostics(layer, feature, pointNumber, pointCount, destination)
+    } catch (e) {
+      if (startedEditing && !layer.rollBack()) {
+        throw new Error(String(e) + "\n\n" + qsTr("Could not roll back the edit session."))
+      }
+      if (!startedEditing) {
+        throw new Error(String(e) + "\n\n" + qsTr("Editing could not be started, or the layer was already being edited."))
+      }
+      throw e
+    }
+    if (startedEditing && !layer.commitChanges()) {
+      throw new Error(qsTr("Could not save point %1 of %2 to %3. The edit buffer may still contain unsaved changes; earlier points may already have been saved.")
+                      .arg(pointNumber).arg(pointCount).arg(destination))
+    }
+    return !startedEditing
+  }
+
+  function fillLayer(layer, points, attrs, destination) {
     let names = ["RunID", "RunName", "RunCreated", "Name", "InFeature",
                  "Created", "RunSamplingPct", "Requested", "Generated", "MinDistance", "Mode"]
     let indexes = {}
@@ -898,6 +930,7 @@ Item {
     if (!featureUtils) {
       throw new Error("Feature helper is unavailable.")
     }
+    let pending = false
     for (let i = 0; i < points.length; i++) {
       let geometry = geometryUtils.createGeometryFromWkt(
           "POINT(" + points[i].x + " " + points[i].y + ")")
@@ -917,9 +950,9 @@ Item {
       feature.setAttribute(indexes.Generated, attrs.generated)
       feature.setAttribute(indexes.MinDistance, attrs.minDistance)
       feature.setAttribute(indexes.Mode, attrs.mode)
-      addFeatureWithDiagnostics(layer, feature, i + 1, points.length)
+      pending = writePoint(layer, feature, i + 1, points.length, destination) || pending
     }
-    return true
+    return pending
   }
 
   function createTypedLayer(points, crs, attrs) {
@@ -937,7 +970,7 @@ Item {
       throw new Error("Could not create the temporary point layer (CRS: "
                       + get(crs, "authid") + ").")
     }
-    fillLayer(layer, points, attrs)
+    fillLayer(layer, points, attrs, qsTr("Temporary layer for a new project-folder GeoPackage"))
     return layer
   }
 
@@ -1030,9 +1063,11 @@ Item {
       })
     }
     let before = get(layer, "featureCount")
-    fillLayer(layer, pts, attrs)
+    let pending = fillLayer(layer, pts, attrs, layerUsesPath(layer, projectGeoPackagePath())
+                            ? qsTr("Existing project-folder GeoPackage")
+                            : qsTr("Project Sample Points layer"))
     log("Appended to project layer; featureCount " + before + " -> " + get(layer, "featureCount"))
-    return true
+    return pending
   }
 
   function addOutputLayer(points, target, attrs) {
@@ -1043,19 +1078,29 @@ Item {
     let savedExists = fileUtils.fileExists(path)
     let projectLayer = findProjectSampleLayer()
     if (projectLayer) {
+      if (typeof Qgis.TransactionMode === "undefined"
+          || typeof Qgis.TransactionMode.Disabled === "undefined"
+          || typeof qgisProject.transactionMode === "undefined") {
+        throw new Error("Cannot determine the project's transaction mode safely; no points were added.")
+      }
+      if (qgisProject.transactionMode !== Qgis.TransactionMode.Disabled) {
+        throw new Error("Sample Points in projects using transaction groups are not supported; no points were added.")
+      }
       if (savedExists && !layerUsesPath(projectLayer, path)) {
         throw new Error("A different Sample Points layer is already in this project. "
                         + "Resolve the conflict with " + path + " before generating points.")
       }
-      if (appendToProjectLayer(projectLayer, points, target, attrs)) {
-        attempt("repaint", function() { projectLayer.triggerRepaint() })
+      let pending = appendToProjectLayer(projectLayer, points, target, attrs)
+      attempt("repaint", function() { projectLayer.triggerRepaint() })
+      if (pending) {
+        mainWindow.displayToast(qsTr("Added %1 points to the existing edit session; save the layer edits to persist them.").arg(points.length))
+      } else {
         mainWindow.displayToast(qsTr("Added %1 points to the project's Sample Points layer").arg(points.length))
-        if (layerUsesPath(projectLayer, path)) {
-          fallbackWarningDialog.open()
-        }
-        return true
       }
-      return false
+      if (layerUsesPath(projectLayer, path)) {
+        fallbackWarningDialog.open()
+      }
+      return true
     }
 
     let layer
