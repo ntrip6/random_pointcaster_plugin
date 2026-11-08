@@ -4,7 +4,7 @@ This is a QField app-wide plugin written in QML/JavaScript.
 
 ## Install
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
-https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.3.0.zip
+https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.0.zip
 
 Look for a tool in the top right corner of screen. 
 
@@ -26,12 +26,24 @@ Polygons and lines should be in a projected CRS with meter units (not degrees).
 
 ## Output attributes
 
-| Field       | Type          | Content                                                        |
-|-------------|---------------|----------------------------------------------------------------|
-| `Name`      | Text (50)     | `<feature name> Sample <n> <HH:mm:ss>`, e.g. `Lake Sample 2 14:32:05` |
-| `InFeature` | Integer       | FID of the polygon or line the point belongs to (empty for map extent) |
-| `Created`   | Date/time     | Full creation date and time of each point                      |
-| `RunSamplingPct` | Decimal   | Percent of the feature sampled, assuming 1 m² (polygons) or 1 m (lines) per point: points ÷ area or length × 100 |
+| Field | Type | Content |
+|-------|------|---------|
+| `RunID` | Text (36) | Unique identifier shared by all points in a run |
+| `RunName` | Text (255) | Feature name and run start time, or `Multiple features` and the time |
+| `RunCreated` | Date/time | Time when the run started |
+| `RunNumber` | Integer (64 bit) | Optional; currently left empty |
+| `Name` | Text (50) | `<feature name> Sample <n> <HH:mm:ss>` |
+| `InFeature` | Integer (64 bit) | Source feature ID (empty for map extent) |
+| `Created` | Date/time | Creation time of the point |
+| `RunSamplingPct` | Decimal | Percent of the source feature sampled, assuming 1 m² (polygons) or 1 m (lines) per point: points ÷ area or length × 100 |
+| `Requested` | Integer (64 bit) | Total points requested across all features in the run |
+| `Generated` | Integer (64 bit) | Total points generated across all features in the run |
+| `MinDistance` | Decimal | Minimum-distance setting in metres |
+| `Mode` | Text (10) | `count` or `density` |
+
+All run-level values are shared by every point from the same operation.
+`RunSamplingPct` describes each point's source feature and may differ between
+features in the same run.
 
 The feature name is read from the first non-empty field called `Name`, `Label`
 or `Title` (case-insensitive, in that order). If none exists, `Polygon <FID>`
@@ -46,36 +58,29 @@ plugin writes into a layer that already exists in your project when it can.
    layer named exactly `Sample Points`, the plugin adds the points directly to
    it. Because it is a normal project layer, QFieldCloud and QFieldSync treat
    the new points as ordinary edits and bring them back to Desktop.
-2. **Fallback (does not sync).** If there is no such layer, or it cannot be
-   written to, the plugin saves the points to `random_pointcaster.gpkg` in
-   QField's own folder on the device (the project folder is used only if that
-   fails) and appends to it on later runs. The toast after each run shows the
-   full path. The layer is added to the project as `Sample Points <HH:mm:ss>`
-   (time of the run), but QField does not keep it in the project, so it
-   disappears when the project is closed. The `.gpkg` file stays on the device.
+2. **Project-folder file (does not automatically sync).** If there is no such
+   layer, the plugin creates `random_pointcaster.gpkg` alongside the current
+   project file and appends to it on later runs. It adds the file as `Sample
+   Points` for the current session and reloads it when the project is reopened,
+   while the plugin is enabled. The project folder must be writable. Projects
+   in the same folder share this file; use separate folders to keep their
+   points separate.
 
-### Getting the fallback points back to desktop GIS
+If an existing `Sample Points` layer is missing required fields or cannot be
+written, the plugin reports an error instead of silently creating another
+dataset. If both a different project layer named `Sample Points` and a
+`random_pointcaster.gpkg` file are present, resolve the conflict before
+generating more points; neither dataset is overwritten. If writing fails
+partway through a run, some points may already have been added; inspect the
+layer before retrying.
 
-The points from every run accumulate in `random_pointcaster.gpkg`, which is not
-synced. Use the **Export** button (the box-with-arrow icon next to the plugin
-button in the toolbar) at any time, including after QField has been restarted:
+### Exporting project-folder points
 
-- **Share** opens the system share sheet (email, Drive, AirDrop, etc.).
-- **Save a copy** lets you choose a folder or USB stick.
-
-Either way you get one file containing all runs. In QGIS, add it with
-**Layer > Add Layer > Add Vector Layer**.
-
-#### Where the file is stored
-
-`random_pointcaster.gpkg` is saved in QField's app directory. The toast after a
-run shows the exact path, and QField's **About QField** screen lists the app
-directory too.
-
-| Platform | Location |
-|----------|----------|
-| Android  | `Internal Storage/Android/data/ch.opengis.qfield/files/QField/random_pointcaster.gpkg` (visible over USB in File transfer mode) |
-| iOS      | Files app > On My iPhone/iPad > QField > `random_pointcaster.gpkg` |
+QField's **Compress project and send to...** action archives the project folder,
+including `random_pointcaster.gpkg`. Check the resulting ZIP before removing
+the device copy. The runtime-added layer is not written into the project file,
+so in QGIS Desktop add the GeoPackage manually; QField reloads it automatically
+when the project is reopened with this plugin enabled.
 
 ### Set up in QGIS Desktop before packaging or syncing
 
@@ -93,11 +98,8 @@ are reprojected to 4326 on write.)
    (**Layer > Create Layer > New GeoPackage Layer**).
 2. Table/layer name `Sample Points`, geometry type **Point**, CRS EPSG:4326
    (other CRSs are reprojected).
-3. Add exactly these fields (names are case-sensitive):
-   - `Name`: Text (string), length 50, for labeling
-   - `InFeature`: Integer (64 bit), for joining with feature
-   - `Created`: Date & Time, now
-   - `RunSamplingPct`: Decimal (double). Percent of the feature sampled, assuming 1 m² per point for polygons or 1 m per point for lines
+3. Add the fields in the **Output attributes** table above (names are
+   case-sensitive). Leave them nullable.
 4. Add the layer to the project, name it `Sample Points`, and make sure it is
    editable (do not set it read-only).
 5. Package for QField with QFieldSync or push to QFieldCloud as usual. Set the
@@ -108,3 +110,16 @@ are reprojected to 4326 on write.)
 
 Troubleshooting: the Message Log lines starting with `[Random Pointcaster]` show
 which route was used (`Appended to project layer; featureCount X -> Y`).
+
+### Existing layers from earlier versions
+
+Before upgrading, back up existing point files. Add the missing fields listed in
+**Output attributes** to the existing `Sample Points` layer, preserving its
+features, and sync or copy the updated file to the device. Existing points have
+no recorded run metadata; the new fields remain empty for those points. For a
+fallback file, copy it from QField's app directory, update its schema on Desktop, and
+copy it to the desired project folder as `random_pointcaster.gpkg`. Version
+0.3.1 and earlier may have stored a shared fallback file in QField's app
+directory instead. It is not moved automatically: back it up and choose which
+project folder should receive it. Do not overwrite another file or replace
+existing points with an empty template.

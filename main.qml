@@ -14,73 +14,54 @@ Item {
   property var pendingTargets: []
   property string selectionSummary: ""
   property string runTime: ""
-  property var createdLayerNames: []
-  property string lastSavedPath: ""
-  property string exportPath: ""
+  property string projectFilePath: ""
+  property var projectInfoItem: null
 
   Component.onCompleted: {
     log("Plugin loaded")
     iface.addItemToPluginsToolbar(pluginButton)
-    iface.addItemToPluginsToolbar(exportButton)
-    log("Toolbar buttons registered")
-  }
-
-  QfToolButton {
-    id: exportButton
-    iconSource: "icon_export.svg"
-    iconColor: Theme.mainColor
-    bgcolor: Theme.darkGray
-    round: true
-
-    onClicked: {
-      log("Export button clicked")
-      plugin.exportPath = plugin.findExportFile()
-      if (!plugin.exportPath) {
-        mainWindow.displayToast(qsTr("Random Pointcaster: no saved points file found yet. Generate points first."))
-        return
-      }
-      exportDialog.open()
+    log("Toolbar button registered")
+    projectInfoItem = iface.findItemByObjectName("projectInfo")
+    if (projectInfoItem && projectInfoItem.filePath) {
+      projectFilePath = String(projectInfoItem.filePath)
+      restoreTimer.restart()
     }
   }
 
-  Dialog {
-    id: exportDialog
-    title: qsTr("Export sample points")
-    modal: true
-    standardButtons: Dialog.Cancel
-    parent: mainWindow.contentItem
-    anchors.centerIn: parent
-    width: Math.min(parent.width * 0.9, 360)
-    z: 10000
+  Connections {
+    target: plugin.projectInfoItem
+    ignoreUnknownSignals: true
 
-    contentItem: Column {
-      spacing: 12
-      width: exportDialog.availableWidth
-
-      Label {
-        width: parent.width
-        wrapMode: Text.WordWrap
-        text: qsTr("All points from every run are in:\n%1").arg(plugin.exportPath)
-      }
-
-      Button {
-        width: parent.width
-        text: qsTr("Share (email, Drive, ...)")
-        onClicked: {
-          exportDialog.close()
-          plugin.shareFile(plugin.exportPath)
-        }
-      }
-
-      Button {
-        width: parent.width
-        text: qsTr("Save a copy to a folder or USB")
-        onClicked: {
-          exportDialog.close()
-          plugin.saveCopyOfFile(plugin.exportPath)
-        }
+    function onFilePathChanged() {
+      if (!plugin.projectInfoItem.filePath) {
+        restoreTimer.stop()
+        plugin.projectFilePath = ""
+        plugin.pendingTargets = []
       }
     }
+  }
+
+  Connections {
+    target: iface
+    ignoreUnknownSignals: true
+
+    function onLoadProjectTriggered(path, name) {
+      restoreTimer.stop()
+      plugin.projectFilePath = ""
+      plugin.pendingTargets = []
+    }
+
+    function onLoadProjectEnded(path, name) {
+      plugin.projectFilePath = String(path)
+      restoreTimer.restart()
+    }
+  }
+
+  Timer {
+    id: restoreTimer
+    interval: 1
+    repeat: false
+    onTriggered: plugin.restoreProjectLayer()
   }
 
   QfToolButton {
@@ -191,6 +172,8 @@ Item {
       ? QfFeatureUtils : (typeof FeatureUtils !== "undefined" ? FeatureUtils : null)
   readonly property var projectUtils: typeof QfProjectUtils !== "undefined"
       ? QfProjectUtils : (typeof ProjectUtils !== "undefined" ? ProjectUtils : null)
+  readonly property var fileUtils: typeof QfFileUtils !== "undefined"
+      ? QfFileUtils : (typeof FileUtils !== "undefined" ? FileUtils : null)
 
   function log(message) {
     console.warn("[Random Pointcaster] " + message)
@@ -244,7 +227,8 @@ Item {
     }
 
     let outCrs = targets[0].crs
-    runTime = timeLabel(new Date())
+    let runStarted = new Date()
+    runTime = timeLabel(runStarted)
     let outCrsId = get(outCrs, "authid")
     let points = []
     let overlapping = false
@@ -276,7 +260,8 @@ Item {
           x: p.x, y: p.y,
           name: target.name + " Sample " + (i + 1) + " " + runTime,
           featureId: target.id,
-          rate: rate
+          rate: rate,
+          created: new Date()
         })
       }
     }
@@ -289,7 +274,18 @@ Item {
       return
     }
 
-    if (!addOutputLayer(points, { crs: outCrs })) {
+    let attrs = {
+      runId: newRunId(),
+      runName: (targets.length === 1 ? targets[0].name : qsTr("Multiple features"))
+          + " - " + dateTimeLabel(runStarted),
+      runCreated: runStarted,
+      runNumber: null,
+      requested: requested,
+      generated: points.length,
+      minDistance: options.minDistance,
+      mode: options.mode
+    }
+    if (!addOutputLayer(points, { crs: outCrs }, attrs)) {
       log("Failed: output layer creation did not complete")
       return
     }
@@ -693,18 +689,24 @@ Item {
     return "Sample Points"
   }
 
-  // Name for layers created by this run; the plain layerName() is kept for the
-  // project layer so that it is still found and synced
-  function newLayerName() {
-    return layerName() + " " + runTime
-  }
-
   function pad2(n) {
     return (n < 10 ? "0" : "") + n
   }
 
   function timeLabel(date) {
     return pad2(date.getHours()) + ":" + pad2(date.getMinutes()) + ":" + pad2(date.getSeconds())
+  }
+
+  function dateTimeLabel(date) {
+    return date.getFullYear() + "-" + pad2(date.getMonth() + 1) + "-" + pad2(date.getDate())
+        + " " + pad2(date.getHours()) + ":" + pad2(date.getMinutes())
+  }
+
+  function newRunId() {
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c) {
+      let r = Math.floor(Math.random() * 16)
+      return (c === "x" ? r : (r & 3 | 8)).toString(16)
+    })
   }
 
   // Polygon area in m2; assumes a projected CRS with metre units
@@ -751,38 +753,54 @@ Item {
     return total
   }
 
-  // Adds the points to a layer having Name, InFeature, Created and RunSamplingPct fields
   function fillLayer(layer, points, attrs) {
-    let nameIndex = layer.fields.indexOf("Name")
-    let featureIndex = layer.fields.indexOf("InFeature")
-    let createdIndex = layer.fields.indexOf("Created")
-    let rateIndex = layer.fields.indexOf("RunSamplingPct")
-    log("Field indexes: Name=" + nameIndex + ", InFeature=" + featureIndex
-        + ", Created=" + createdIndex + ", RunSamplingPct=" + rateIndex)
-    if (nameIndex < 0 || featureIndex < 0 || createdIndex < 0 || rateIndex < 0) {
-      return false
+    let names = ["RunID", "RunName", "RunCreated", "RunNumber", "Name", "InFeature",
+                 "Created", "RunSamplingPct", "Requested", "Generated", "MinDistance", "Mode"]
+    let indexes = {}
+    let missing = []
+    for (let i = 0; i < names.length; i++) {
+      indexes[names[i]] = layer.fields.indexOf(names[i])
+      if (indexes[names[i]] < 0) {
+        missing.push(names[i])
+      }
+    }
+    if (missing.length) {
+      throw new Error("Sample Points layer is missing fields: " + missing.join(", ")
+          + ". Update its schema before generating points.")
+    }
+    if (!featureUtils) {
+      throw new Error("Feature helper is unavailable.")
     }
     for (let i = 0; i < points.length; i++) {
       let geometry = geometryUtils.createGeometryFromWkt(
           "POINT(" + points[i].x + " " + points[i].y + ")")
       let feature = featureUtils.createBlankFeature(layer.fields, geometry)
-      feature.setAttribute(nameIndex, points[i].name)
+      feature.setAttribute(indexes.RunID, attrs.runId)
+      feature.setAttribute(indexes.RunName, attrs.runName)
+      feature.setAttribute(indexes.RunCreated, attrs.runCreated)
+      if (attrs.runNumber !== null) {
+        feature.setAttribute(indexes.RunNumber, attrs.runNumber)
+      }
+      feature.setAttribute(indexes.Name, points[i].name)
       if (points[i].featureId !== null) {
-        feature.setAttribute(featureIndex, points[i].featureId)
+        feature.setAttribute(indexes.InFeature, points[i].featureId)
       }
-      feature.setAttribute(createdIndex, attrs.created)
+      feature.setAttribute(indexes.Created, points[i].created)
       if (points[i].rate !== null) {
-        feature.setAttribute(rateIndex, points[i].rate)
+        feature.setAttribute(indexes.RunSamplingPct, points[i].rate)
       }
+      feature.setAttribute(indexes.Requested, attrs.requested)
+      feature.setAttribute(indexes.Generated, attrs.generated)
+      feature.setAttribute(indexes.MinDistance, attrs.minDistance)
+      feature.setAttribute(indexes.Mode, attrs.mode)
       if (!layerUtils.addFeature(layer, feature)) {
-        log("addFeature failed for point " + i)
-        return false
+        throw new Error("Could not add point " + (i + 1) + " of " + points.length
+            + "; earlier points from this run may already have been added.")
       }
     }
     return true
   }
 
-  // Memory layer with Name, InFeature (Integer), Created (DateTime) and RunSamplingPct (Double, %)
   function createTypedLayer(points, crs, attrs) {
     try {
       if (!featureUtils) {
@@ -790,9 +808,12 @@ Item {
         return null
       }
       let uri = "Point?crs=" + get(crs, "authid")
-          + "&field=Name:string(50)&field=InFeature:integer64"
+          + "&field=RunID:string(36)&field=RunName:string(255)&field=RunCreated:datetime"
+          + "&field=RunNumber:int8&field=Name:string(50)&field=InFeature:int8"
           + "&field=Created:datetime&field=RunSamplingPct:double"
-      let layer = layerUtils.loadVectorLayer(uri, newLayerName(), "memory")
+          + "&field=Requested:int8&field=Generated:int8"
+          + "&field=MinDistance:double&field=Mode:string(10)"
+      let layer = layerUtils.loadVectorLayer(uri, layerName(), "memory")
       if (!layer || !get(layer, "isValid")) {
         log("Memory layer with typed fields is invalid; uri=" + uri)
         return null
@@ -804,244 +825,152 @@ Item {
     }
   }
 
-  // Fallback: attribute types are inferred, so Created is stored as ISO text
-  function createGeoJsonLayer(points, crs, attrs) {
-    let features = points.map(function(p, i) {
-      let properties = { Name: p.name, Created: attrs.created.toISOString() }
-      if (p.featureId !== null) {
-        properties.InFeature = p.featureId
-      }
-      if (p.rate !== null) {
-        properties.RunSamplingPct = p.rate
-      }
-      return {
-        type: "Feature",
-        properties: properties,
-        geometry: { type: "Point", coordinates: [p.x, p.y] }
-      }
-    })
-    let geojson = JSON.stringify({ type: "FeatureCollection", features: features })
-    return layerUtils.memoryLayerFromJsonString(newLayerName(), geojson, crs)
-  }
-
-  // Saves the in-memory layer to a GeoPackage and reloads it from disk, trying each
-  // candidate path in turn. Memory layers vanish when QField closes; the file layer
-  // survives. Returns the original memory layer if every path fails.
-  function persistLayer(memoryLayer, paths) {
-    let saved = null
-    if (typeof layerUtils.saveVectorLayerAs !== "function") {
-      log("saveVectorLayerAs not available in this QField build")
-    } else {
-      for (let i = 0; i < paths.length && !saved; i++) {
-        saved = attempt("save to " + paths[i], function() {
-          let result = layerUtils.saveVectorLayerAs(memoryLayer, paths[i], "GPKG")
-          log("saveVectorLayerAs(" + paths[i] + ") -> '" + result + "'")
-          if (!result) {
-            return null
-          }
-          let fileLayer = layerUtils.loadVectorLayer(result, newLayerName(), "ogr")
-          return (fileLayer && get(fileLayer, "isValid")) ? { layer: fileLayer, path: result } : null
-        })
-      }
-    }
-
-    if (!saved) {
-      mainWindow.displayToast(qsTr("Random Pointcaster: could not save to a file; the layer is temporary"))
-      return memoryLayer
-    }
-    mainWindow.displayToast(qsTr("Points saved to %1").arg(saved.path))
-    lastSavedPath = saved.path
-    return saved.layer
-  }
-
-  // Appends to the GeoPackage if it already exists at one of the paths;
-  // returns { layer, path } or null
-  function appendToExisting(paths, points, attrs) {
-    for (let i = 0; i < paths.length; i++) {
-      let found = attempt("append to " + paths[i], function() {
-        let existing = layerUtils.loadVectorLayer(paths[i], newLayerName(), "ogr")
-        if (!existing || !get(existing, "isValid")) {
-          return null
-        }
-        let before = get(existing, "featureCount")
-        if (!fillLayer(existing, points, attrs)) {
-          return null
-        }
-        log("Appended to " + paths[i] + "; featureCount " + before + " -> "
-            + get(existing, "featureCount"))
-        return { layer: existing, path: paths[i] }
-      })
-      if (found) {
-        return found
-      }
-    }
-    return null
-  }
-
   readonly property string gpkgFileName: "random_pointcaster.gpkg"
 
-  // The saved points file: the one used this session, else the first candidate
-  // path where the file exists (e.g. after QField was restarted)
-  function findExportFile() {
-    let paths = lastSavedPath ? [lastSavedPath] : []
-    paths = paths.concat(gpkgCandidatePaths())
-    for (let i = 0; i < paths.length; i++) {
-      let found = attempt("look for " + paths[i], function() {
-        let probe = layerUtils.loadVectorLayer(paths[i], "probe", "ogr")
-        return (probe && get(probe, "isValid")) ? paths[i] : null
-      })
-      if (found) {
-        return found
+  function projectGeoPackagePath() {
+    if (!projectFilePath) {
+      throw new Error("Open a saved project before generating points.")
+    }
+    if (!fileUtils || typeof fileUtils.fileExists !== "function"
+        || typeof fileUtils.absolutePath !== "function") {
+      throw new Error("This QField version lacks the file utilities needed for safe project storage.")
+    }
+    let folder = fileUtils.absolutePath(projectFilePath)
+    if (!folder) {
+      throw new Error("The current project folder could not be determined.")
+    }
+    return String(folder).replace(/\\/g, "/").replace(/\/+$/, "") + "/" + gpkgFileName
+  }
+
+  function loadSavedLayer(path) {
+    let layer = layerUtils.loadVectorLayer(path, layerName(), "ogr")
+    if (!layer || !get(layer, "isValid") || get(layer, "geometryType") !== 0) {
+      throw new Error("Cannot open the existing point GeoPackage: " + path
+          + ". It was not overwritten.")
+    }
+    return layer
+  }
+
+  function restoreProjectLayer() {
+    try {
+      let path = projectGeoPackagePath()
+      if (!fileUtils.fileExists(path) || layerAlreadyInProject(path)) {
+        return
       }
-    }
-    return null
-  }
-
-  function shareFile(path) {
-    lastError = ""
-    attempt("share file", function() {
-      platformUtilities.sendDatasetTo(path)
-    })
-    if (lastError) {
-      mainWindow.displayToast(qsTr("Random Pointcaster: could not share: %1").arg(lastError))
-    }
-  }
-
-  function saveCopyOfFile(path) {
-    lastError = ""
-    attempt("save copy", function() {
-      platformUtilities.exportDatasetTo(path)
-    })
-    if (lastError) {
-      mainWindow.displayToast(qsTr("Random Pointcaster: could not export: %1").arg(lastError))
+      if (findProjectSampleLayer()) {
+        throw new Error("A different Sample Points layer is already in this project. "
+                        + "The saved file was not loaded: " + path)
+      }
+      let layer = loadSavedLayer(path)
+      if (!projectUtils.addMapLayer(qgisProject, layer)) {
+        throw new Error("Could not reload the saved Sample Points layer: " + path)
+      }
+      log("Restored Sample Points from " + path)
+    } catch (e) {
+      log("ERROR restoring points: " + e)
+      mainWindow.displayToast(qsTr("Random Pointcaster: %1").arg(e))
     }
   }
 
-  // Where the GeoPackage may live, best first: QField's own writable folder on the
-  // device, then the project folder
-  function gpkgCandidatePaths() {
-    let paths = []
-    let appDir = attempt("application directory", function() {
-      return typeof platformUtilities !== "undefined" ? platformUtilities.applicationDirectory() : null
-    })
-    if (appDir) {
-      paths.push(String(appDir).replace(/\\/g, "/").replace(/\/+$/, "") + "/" + gpkgFileName)
-    }
-    let folder = attempt("project folder", function() { return qgisProject.homePath })
-    if (folder) {
-      paths.push(String(folder).replace(/\\/g, "/").replace(/\/+$/, "") + "/" + gpkgFileName)
-    }
-    log("GeoPackage candidate paths: " + paths.join(" | "))
-    return paths
-  }
-
-  // Looks under the plain name and every name this session gave to a created layer
   function layerAlreadyInProject(path) {
-    return attempt("find layer in project", function() {
-      let names = [layerName()].concat(createdLayerNames)
-      for (let n = 0; n < names.length; n++) {
-        let found = qgisProject.mapLayersByName(names[n])
-        for (let i = 0; found && i < found.length; i++) {
-          let source = String(get(found[i], "source")).split("|")[0]
-          if (source.replace(/\\/g, "/") === path) {
-            return true
-          }
-        }
+    let found = qgisProject.mapLayersByName(layerName())
+    for (let i = 0; found && i < found.length; i++) {
+      if (layerUsesPath(found[i], path)) {
+        return true
       }
-      return false
-    })
+    }
+    return false
+  }
+
+  function layerUsesPath(layer, path) {
+    let source = String(get(layer, "source")).split("|")[0]
+    return source.replace(/\\/g, "/") === path
   }
 
   // Finds a point layer named "Sample Points" that is already part of the project
   function findProjectSampleLayer() {
-    return attempt("find project Sample Points layer", function() {
-      let found = qgisProject.mapLayersByName(layerName())
-      for (let i = 0; found && i < found.length; i++) {
-        let layer = found[i]
-        if (get(layer, "isValid") && get(layer, "geometryType") === 0) {
-          return layer
-        }
+    let found = qgisProject.mapLayersByName(layerName())
+    for (let i = 0; found && i < found.length; i++) {
+      let layer = found[i]
+      if (get(layer, "isValid") && get(layer, "geometryType") === 0) {
+        return layer
       }
-      return null
-    })
+    }
+    return null
   }
 
   // Adds the points straight into the project's own layer so that QFieldCloud /
   // QFieldSync see them as ordinary edits
   function appendToProjectLayer(layer, points, target, attrs) {
-    return attempt("append to project layer", function() {
-      let layerCrsId = get(layerCrs(layer), "authid")
-      let sourceCrsId = get(target.crs, "authid")
-      let pts = points
-      if (layerCrsId && sourceCrsId && layerCrsId !== sourceCrsId) {
-        log("Reprojecting points " + sourceCrsId + " -> " + layerCrsId)
-        pts = points.map(function(p) {
-          let q = reprojectPoint(p, target.crs, layerCrs(layer))
-          return { x: q.x, y: q.y, name: p.name, featureId: p.featureId, rate: p.rate }
-        })
-      }
-      let before = get(layer, "featureCount")
-      if (!fillLayer(layer, pts, attrs)) {
-        return false
-      }
-      log("Appended to project layer; featureCount " + before + " -> " + get(layer, "featureCount"))
-      return true
-    })
+    let layerCrsId = get(layerCrs(layer), "authid")
+    let sourceCrsId = get(target.crs, "authid")
+    let pts = points
+    if (layerCrsId && sourceCrsId && layerCrsId !== sourceCrsId) {
+      log("Reprojecting points " + sourceCrsId + " -> " + layerCrsId)
+      pts = points.map(function(p) {
+        let q = reprojectPoint(p, target.crs, layerCrs(layer))
+        return { x: q.x, y: q.y, name: p.name, featureId: p.featureId, rate: p.rate,
+                 created: p.created }
+      })
+    }
+    let before = get(layer, "featureCount")
+    fillLayer(layer, pts, attrs)
+    log("Appended to project layer; featureCount " + before + " -> " + get(layer, "featureCount"))
+    return true
   }
 
-  function addOutputLayer(points, target) {
+  function addOutputLayer(points, target, attrs) {
     log("Creating output layer")
-    let attrs = { created: new Date() }
     log("Points=" + points.length)
 
+    let path = projectGeoPackagePath()
+    let savedExists = fileUtils.fileExists(path)
     let projectLayer = findProjectSampleLayer()
     if (projectLayer) {
+      if (savedExists && !layerUsesPath(projectLayer, path)) {
+        throw new Error("A different Sample Points layer is already in this project. "
+                        + "Resolve the conflict with " + path + " before generating points.")
+      }
       if (appendToProjectLayer(projectLayer, points, target, attrs)) {
         attempt("repaint", function() { projectLayer.triggerRepaint() })
         mainWindow.displayToast(qsTr("Added %1 points to the project's Sample Points layer").arg(points.length))
         return true
       }
-      log("Project layer exists but could not be written; using " + gpkgFileName + " instead")
+      return false
     }
 
-    let paths = gpkgCandidatePaths()
-
-    let appended = appendToExisting(paths, points, attrs)
-    let layer = appended ? appended.layer : null
-    if (appended) {
-      lastSavedPath = appended.path
-    }
-    if (layer) {
-      if (layerAlreadyInProject(appended.path)) {
-        attempt("repaint", function() { layer.triggerRepaint() })
-        mainWindow.displayToast(qsTr("Added %1 points to %2").arg(points.length).arg(gpkgFileName))
-        attempt("refresh", function() { mapCanvas.refresh() })
-        return true
-      }
+    let layer
+    if (savedExists) {
+      layer = loadSavedLayer(path)
+      appendToProjectLayer(layer, points, target, attrs)
       mainWindow.displayToast(qsTr("Added %1 points to %2").arg(points.length).arg(gpkgFileName))
     } else {
       layer = createTypedLayer(points, target.crs, attrs)
       if (!layer) {
-        log("Typed layer failed; falling back to GeoJSON layer without typed fields")
-        layer = createGeoJsonLayer(points, target.crs, attrs)
-      }
-      if (!layer || !get(layer, "isValid")) {
         log("Failed: output layer is null or invalid")
         mainWindow.displayToast(qsTr("Could not create the sample-points layer."))
         return false
       }
-      if (paths.length > 0) {
-        layer = persistLayer(layer, paths)
+      if (fileUtils.fileExists(path)) {
+        throw new Error("The destination appeared while generating points; it was not overwritten: " + path)
       }
+      if (typeof layerUtils.saveVectorLayerAs !== "function") {
+        throw new Error("This QField version cannot save the Sample Points GeoPackage.")
+      }
+      let result = layerUtils.saveVectorLayerAs(layer, path, "GPKG")
+      if (!result) {
+        throw new Error("Could not save Sample Points to the project folder: " + path)
+      }
+      layer = loadSavedLayer(result)
+      mainWindow.displayToast(qsTr("Points saved to %1").arg(result))
     }
 
     if (!projectUtils.addMapLayer(qgisProject, layer)) {
       log("Failed: addMapLayer returned false")
-      mainWindow.displayToast(qsTr("Could not add the layer to the project."))
+      mainWindow.displayToast(qsTr("Points were saved, but the layer could not be added to the project: %1").arg(path))
       return false
     }
     log("Output layer added to project")
-    createdLayerNames = createdLayerNames.concat([newLayerName()])
     return true
   }
 }
