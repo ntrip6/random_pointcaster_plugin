@@ -1,12 +1,12 @@
 ﻿# Random Pointcaster Plugin for QField
 
-This is a QField app-wide plugin written in QML/JavaScript. Version 0.4.4
+This is a QField app-wide plugin written in QML/JavaScript. Version 0.4.5
 stores points from multiple sampling runs in one `Sample Points` layer, with
 run metadata on each point.
 
 ## Install
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
-https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.4.zip
+https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.5.zip
 
 Look for the Random Pointcaster button.
 
@@ -75,7 +75,9 @@ QField persists edits to existing project layers. A plugin-created layer is not 
    `Sample Points` for the current session and reloads it when the project is
    reopened while the plugin is enabled. An open, saved project and a writable
    project folder are required; the plugin does not fall back to the app
-   directory.
+   directory. The local fallback warning appears each time until you select
+   **I understand** and press **OK**. This choice is saved in QField's settings
+   on the device and applies across projects.
 
 The project-folder file uses the CRS of the first sampled target when it is
 created. Later points are reprojected to the existing layer's CRS when needed.

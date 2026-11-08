@@ -1,5 +1,6 @@
 ﻿import QtQuick
 import QtQuick.Controls
+import Qt.labs.settings 1.0
 
 import org.qfield
 import org.qgis
@@ -18,6 +19,12 @@ Item {
   property string projectFilePath: ""
   property var projectInfoItem: null
   property string generationError: ""
+
+  Settings {
+    id: pluginSettings
+    category: "RandomPointcaster"
+    property bool fallbackWarningAcknowledged: false
+  }
 
   Component.onCompleted: {
     log("Plugin loaded")
@@ -128,10 +135,33 @@ Item {
     width: Math.min(parent.width * 0.9, 360)
     z: 10000
 
-    contentItem: Label {
+    onAboutToShow: fallbackWarningAcknowledgement.checked = false
+    onAccepted: {
+      if (fallbackWarningAcknowledgement.checked) {
+        pluginSettings.fallbackWarningAcknowledged = true
+      }
+    }
+
+    contentItem: Column {
       width: fallbackWarningDialog.availableWidth
-      wrapMode: Text.WordWrap
-      text: qsTr("Fallback points use random_pointcaster.gpkg in this project folder. Saved points will be included in an exported project ZIP, but will not be synchronized automatically to the original QGIS layer.")
+      spacing: 12
+
+      Label {
+        width: parent.width
+        wrapMode: Text.WordWrap
+        text: qsTr("Fallback points use random_pointcaster.gpkg in this project folder. Saved points will be included in an exported project ZIP, but will not be synchronized automatically to the original QGIS layer.")
+      }
+
+      CheckBox {
+        id: fallbackWarningAcknowledgement
+        text: qsTr("I understand")
+      }
+    }
+  }
+
+  function showFallbackWarning() {
+    if (!pluginSettings.fallbackWarningAcknowledged) {
+      fallbackWarningDialog.open()
     }
   }
 
@@ -1147,7 +1177,7 @@ Item {
         mainWindow.displayToast(qsTr("Added %1 points to the project's Sample Points layer").arg(points.length))
       }
       if (layerUsesPath(projectLayer, path)) {
-        fallbackWarningDialog.open()
+        showFallbackWarning()
       }
       return true
     }
@@ -1180,7 +1210,7 @@ Item {
       return false
     }
     log("Output layer added to project")
-    fallbackWarningDialog.open()
+    showFallbackWarning()
     return true
   }
 }
