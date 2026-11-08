@@ -1,6 +1,5 @@
 ﻿import QtQuick
 import QtQuick.Controls
-import Qt.labs.settings 1.0
 
 import org.qfield
 import org.qgis
@@ -20,11 +19,7 @@ Item {
   property var projectInfoItem: null
   property string generationError: ""
 
-  Settings {
-    id: pluginSettings
-    category: "RandomPointcaster"
-    property bool fallbackWarningAcknowledged: false
-  }
+  readonly property string fallbackWarningSetting: "RandomPointcaster/fallbackWarningAcknowledged"
 
   Component.onCompleted: {
     log("Plugin loaded")
@@ -138,7 +133,8 @@ Item {
     onAboutToShow: fallbackWarningAcknowledgement.checked = false
     onAccepted: {
       if (fallbackWarningAcknowledgement.checked) {
-        pluginSettings.fallbackWarningAcknowledged = true
+        settings.setValue(plugin.fallbackWarningSetting, true)
+        settings.sync()
       }
     }
 
@@ -160,7 +156,7 @@ Item {
   }
 
   function showFallbackWarning() {
-    if (!pluginSettings.fallbackWarningAcknowledged) {
+    if (!settings.valueBool(plugin.fallbackWarningSetting, false)) {
       fallbackWarningDialog.open()
     }
   }
