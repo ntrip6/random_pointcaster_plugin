@@ -17,6 +17,7 @@ Item {
   property string runTime: ""
   property string projectFilePath: ""
   property var projectInfoItem: null
+  property string generationError: ""
 
   Component.onCompleted: {
     log("Plugin loaded")
@@ -88,6 +89,23 @@ Item {
       }
       countDialog.open()
       log("Dialog open() called; visible=" + countDialog.visible)
+    }
+  }
+
+  Dialog {
+    id: generationErrorDialog
+    title: qsTr("Random Pointcaster error")
+    modal: true
+    standardButtons: Dialog.Ok
+    parent: mainWindow.contentItem
+    anchors.centerIn: parent
+    width: Math.min(parent.width * 0.9, 360)
+    z: 10000
+
+    contentItem: Label {
+      width: generationErrorDialog.availableWidth
+      wrapMode: Text.WordWrap
+      text: plugin.generationError
     }
   }
 
@@ -219,7 +237,8 @@ Item {
       generatePointsUnsafe(options)
     } catch (e) {
       log("ERROR: " + e)
-      mainWindow.displayToast(qsTr("Random Pointcaster error: %1").arg(e))
+      generationError = String(e)
+      generationErrorDialog.open()
     }
   }
 
@@ -851,27 +870,22 @@ Item {
   }
 
   function createTypedLayer(points, crs, attrs) {
-    try {
-      if (!featureUtils) {
-        log("Feature helper missing")
-        return null
-      }
-      let uri = "Point?crs=" + get(crs, "authid")
-          + "&field=RunID:string(36)&field=RunName:string(50)&field=RunCreated:datetime"
-          + "&field=Name:string(100)&field=InFeature:int8"
-          + "&field=Created:datetime&field=RunSamplingPct:double"
-          + "&field=Requested:int8&field=Generated:int8"
-          + "&field=MinDistance:double&field=Mode:string(10)"
-      let layer = layerUtils.loadVectorLayer(uri, layerName(), "memory")
-      if (!layer || !get(layer, "isValid")) {
-        log("Memory layer with typed fields is invalid; uri=" + uri)
-        return null
-      }
-      return fillLayer(layer, points, attrs) ? layer : null
-    } catch (e) {
-      log("Typed layer error: " + e)
-      return null
+    if (!featureUtils) {
+      throw new Error("Feature helper is unavailable in this QField version.")
     }
+    let uri = "Point?crs=" + get(crs, "authid")
+        + "&field=RunID:string(36)&field=RunName:string(50)&field=RunCreated:datetime"
+        + "&field=Name:string(100)&field=InFeature:int8"
+        + "&field=Created:datetime&field=RunSamplingPct:double"
+        + "&field=Requested:int8&field=Generated:int8"
+        + "&field=MinDistance:double&field=Mode:string(10)"
+    let layer = layerUtils.loadVectorLayer(uri, layerName(), "memory")
+    if (!layer || !get(layer, "isValid")) {
+      throw new Error("Could not create the temporary point layer (CRS: "
+                      + get(crs, "authid") + ").")
+    }
+    fillLayer(layer, points, attrs)
+    return layer
   }
 
   readonly property string gpkgFileName: "random_pointcaster.gpkg"
@@ -980,30 +994,24 @@ Item {
         throw new Error("A different Sample Points layer is already in this project. "
                         + "Resolve the conflict with " + path + " before generating points.")
       }
-      if (layerUsesPath(projectLayer, path)) {
-        fallbackWarningDialog.open()
-      }
       if (appendToProjectLayer(projectLayer, points, target, attrs)) {
         attempt("repaint", function() { projectLayer.triggerRepaint() })
         mainWindow.displayToast(qsTr("Added %1 points to the project's Sample Points layer").arg(points.length))
+        if (layerUsesPath(projectLayer, path)) {
+          fallbackWarningDialog.open()
+        }
         return true
       }
       return false
     }
 
     let layer
-    fallbackWarningDialog.open()
     if (savedExists) {
       layer = loadSavedLayer(path)
       appendToProjectLayer(layer, points, target, attrs)
       mainWindow.displayToast(qsTr("Added %1 points to %2").arg(points.length).arg(gpkgFileName))
     } else {
       layer = createTypedLayer(points, target.crs, attrs)
-      if (!layer) {
-        log("Failed: output layer is null or invalid")
-        mainWindow.displayToast(qsTr("Could not create the sample-points layer."))
-        return false
-      }
       if (fileUtils.fileExists(path)) {
         throw new Error("The destination appeared while generating points; it was not overwritten: " + path)
       }
@@ -1024,6 +1032,7 @@ Item {
       return false
     }
     log("Output layer added to project")
+    fallbackWarningDialog.open()
     return true
   }
 }

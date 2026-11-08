@@ -1,12 +1,12 @@
 ﻿# Random Pointcaster Plugin for QField
 
-This is a QField app-wide plugin written in QML/JavaScript. Version 0.4.0
+This is a QField app-wide plugin written in QML/JavaScript. Version 0.4.1
 stores points from multiple sampling runs in one `Sample Points` layer, with
 run metadata on each point.
 
 ## Install
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
-https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.0.zip
+https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.1.zip
 
 Look for the Random Pointcaster button.
 
@@ -119,4 +119,3 @@ carries a default style that labels each point with its sample number.
 
 Troubleshooting: the Message Log lines starting with `[Random Pointcaster]` show
 which route was used (`Appended to project layer; featureCount X -> Y`).
-
