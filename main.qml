@@ -338,7 +338,8 @@ Item {
       if (!overlapping && target.kind === "polygon") {
         overlapping = fallsInOtherPolygon(generated, targets, t)
       }
-      let rate = (target.size && generated.length > 0) ? generated.length / target.size * 100 : null
+      let rate = (target.size && generated.length > 0)
+          ? truncateSignificant(generated.length / target.size * 100, 5) : null
       let sameCrs = get(target.crs, "authid") === outCrsId
       for (let i = 0; i < generated.length; i++) {
         let p = generated[i]
@@ -347,7 +348,8 @@ Item {
         }
         points.push({
           x: p.x, y: p.y,
-          name: labelWithSuffix(target.name, " Sample " + (i + 1) + " " + runTime, 100),
+          name: target.name,
+          sampleNumber: i + 1,
           featureId: target.id,
           rate: rate,
           created: new Date()
@@ -361,6 +363,16 @@ Item {
           ? qsTr("Density needs a positive value and a feature with a known size.")
           : qsTr("No points could be generated on the selected features."))
       return
+    }
+
+    let numberWidth = Math.max(2, String(points.length).length)
+    for (let i = 0; i < points.length; i++) {
+      let sampleNumber = String(points[i].sampleNumber)
+      while (sampleNumber.length < numberWidth) {
+        sampleNumber = "0" + sampleNumber
+      }
+      points[i].name = labelWithSuffix(points[i].name, " Sample " + sampleNumber + " " + runTime, 100)
+      delete points[i].sampleNumber
     }
 
     attrs.generated = points.length
@@ -796,6 +808,16 @@ Item {
     return (n < 10 ? "0" : "") + n
   }
 
+  function truncateSignificant(value, digits) {
+    if (!isFinite(value) || value === 0) {
+      return value
+    }
+    let parts = value.toExponential().split("e")
+    let mantissa = parts[0].replace(".", "").slice(0, digits)
+    return Number(mantissa[0] + (mantissa.length > 1 ? "." + mantissa.slice(1) : "")
+                  + "e" + parts[1])
+  }
+
   function timeLabel(date) {
     return pad2(date.getHours()) + ":" + pad2(date.getMinutes()) + ":" + pad2(date.getSeconds())
   }
@@ -816,7 +838,7 @@ Item {
     }
   }
 
-  // Polygon area in m2; assumes a projected CRS with metre units
+  // Polygon area in m2; assumes a projected CRS with meter units
   function areaSquareMeters(geometry) {
     return attempt("area", function() {
       let area = get(geometry, "area")
