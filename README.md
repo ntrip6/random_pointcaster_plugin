@@ -1,12 +1,12 @@
 ﻿# Random Pointcaster Plugin for QField
 
-This is a QField app-wide plugin written in QML/JavaScript. Version 0.4.7
+This is a QField app-wide plugin written in QML/JavaScript. Version 0.4.8
 stores points from multiple sampling runs in one `Sample Points` layer, with
 run metadata on each point.
 
 ## Install
 In QField **Settings > Plugins > Install plugin from URL** (using a URL to the ZIP)
-https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.7.zip
+https://github.com/ntrip6/random_pointcaster_plugin/raw/refs/heads/main/random_pointcaster_plugin-0.4.8.zip
 
 Look for the Random Pointcaster button.
 
@@ -38,7 +38,7 @@ between them.
 |-------|------|---------|
 | `RunID` | Text (36) | UTC start timestamp and random suffix, shared by all points in a run (e.g. `20261108T143200Z-ab12`) |
 | `RunName` | Text (50) | `<feature name> - <YYYY-MM-DD HH:mm>` in the device's local time zone, or `Multiple features - <YYYY-MM-DD HH:mm>` |
-| `Name` | Text (100) | `<feature name> Sample <zero-padded n> <HH:mm:ss>` |
+| `Name` | Text (100) | `<feature name> Sample <zero-padded n>` |
 | `InFeature` | Integer (64 bit) | Source feature ID (empty for map extent) |
 | `Created` | Date/time | Creation time of the point |
 | `RunSamplingPct` | Decimal | Percent of the source feature sampled, assuming 1 m² (polygons) or 1 m (lines) per point: generated points ÷ area or length × 100, truncated to five significant digits; empty for map extent or unknown size |
@@ -48,12 +48,12 @@ between them.
 
 All run-level values are shared by every point from the same operation. Use
 `RunID` to group points from a run; `RunName` is a readable label rather than a
-unique identifier. The point `Name` retains its time suffix, but the **layer**
-name is always `Sample Points` without a timestamp.
+unique identifier. Point names do not include a timestamp, and the **layer**
+name is always `Sample Points`.
 `RunSamplingPct` describes each point's source feature and may differ between
 features in the same run. Existing percentages are not changed.
 Long feature names are shortened as needed to fit the `Name` and `RunName`
-fields while preserving the sample number and time suffixes.
+fields while preserving the sample number and run timestamp, respectively.
 Sample numbers restart for each feature and use at least two digits. Their width
 is based on the total number of points actually generated across the run:
 for example, `01` for 99 points, `001` for 100, and `0001` for 1,000.

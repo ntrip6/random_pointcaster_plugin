@@ -14,7 +14,6 @@ Item {
   property var pendingTargets: []
   property bool extentDistanceUnavailable: false
   property string selectionSummary: ""
-  property string runTime: ""
   property string projectFilePath: ""
   property var projectInfoItem: null
   property string generationError: ""
@@ -150,7 +149,7 @@ Item {
 
       CheckBox {
         id: fallbackWarningAcknowledgement
-        text: qsTr("I understand")
+        text: qsTr("Don't show this message again")
       }
     }
   }
@@ -317,7 +316,6 @@ Item {
     let runStarted = new Date()
     let attrs = createRunMetadata(targets.length === 1 ? targets[0].name : qsTr("Multiple features"),
                                   runStarted, options.minDistance, options.mode)
-    runTime = timeLabel(runStarted)
     let outCrsId = get(outCrs, "authid")
     let points = []
     let overlapping = false
@@ -371,7 +369,7 @@ Item {
       while (sampleNumber.length < numberWidth) {
         sampleNumber = "0" + sampleNumber
       }
-      points[i].name = labelWithSuffix(points[i].name, " Sample " + sampleNumber + " " + runTime, 100)
+      points[i].name = labelWithSuffix(points[i].name, " Sample " + sampleNumber, 100)
       delete points[i].sampleNumber
     }
 
@@ -575,8 +573,8 @@ Item {
       list = shown[0]
     }
     return targets.length > 1
-        ? qsTr("You have selected %1. How many points in each feature?").arg(list)
-        : qsTr("You have selected %1. How many points?").arg(list)
+        ? qsTr("You have selected %1. Generate how many points in each feature?").arg(list)
+        : qsTr("You have selected %1. Generate how many points?").arg(list)
   }
 
   // Feature list model roles (Qt::UserRole = 256): Feature=260, Layer=262, Geometry=263, Selected=258
@@ -816,10 +814,6 @@ Item {
     let mantissa = parts[0].replace(".", "").slice(0, digits)
     return Number(mantissa[0] + (mantissa.length > 1 ? "." + mantissa.slice(1) : "")
                   + "e" + parts[1])
-  }
-
-  function timeLabel(date) {
-    return pad2(date.getHours()) + ":" + pad2(date.getMinutes()) + ":" + pad2(date.getSeconds())
   }
 
   function createRunMetadata(targetName, runStarted, minDistance, mode) {
